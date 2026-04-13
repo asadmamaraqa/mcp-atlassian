@@ -1,0 +1,59 @@
+# See README.md for secrets and variables
+name: Deploy MCP Hub connectivity - test
+on:
+  workflow_dispatch:
+# push:
+#   branches:
+#     - main
+
+jobs:
+  deploy:
+    environment: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure GitHub environment has required secrets and variables
+        shell: bash
+        run: |
+          set -e
+          [ -z "${{ secrets.MCP_AZURE_CREDENTIALS }}" ] && ( echo "MCP_AZURE_CREDENTIALS secret required in GitHub environment secrets"; exit 1; )
+          [ -z "${{ vars.AZURE_SUBSCRIPTION_ID }}" ] && ( echo "AZURE_SUBSCRIPTION_ID variable required in GitHub environment variables"; exit 1; )
+          [ -z "${{ vars.RESOURCE_GROUP }}" ] && ( echo "RESOURCE_GROUP variable required in GitHub environment variables"; exit 1; )
+          [ -z "${{ vars.ENV }}" ] && ( echo "ENV variable required in GitHub environment variables"; exit 1; )
+          [ -z "${{ vars.PLUGIN_NAME }}" ] && ( echo "PLUGIN_NAME variable required in GitHub environment variables"; exit 1; )
+          [ -z "${{ vars.MCP_DNS_ZONE_NAMES }}" ] && ( echo "MCP_DNS_ZONE_NAMES variable required in GitHub environment variables"; exit 1; )
+          exit 0
+
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Login to Azure
+        uses: Azure/login@v2
+        with:
+          creds: ${{ secrets.MCP_AZURE_CREDENTIALS }}
+
+      - name: Set Azure subscription
+        run: |
+          az account set --subscription ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # note: this step determines which MCP Garden environment (and thus Solitaire environment)
+      # you are connecting to. Default is to match the GitHub environment name - change by
+      # hardcoding the parameter to resolve-hub-details.sh to either 'dev', 'test' or 'prod'
+      - name: Resolve MCP hub details
+        uses: azure/CLI@v2
+        with:
+          inlineScript: |
+            chmod a+x ${GITHUB_WORKSPACE}/infra/resolve-hub-details.sh
+            sh ${GITHUB_WORKSPACE}/infra/resolve-hub-details.sh ${{ vars.ENV }}
+
+      - name: Deploy Bicep template
+        run: |
+          az deployment group create \
+            --resource-group ${{ vars.RESOURCE_GROUP }} \
+            --template-file infra/bicep/connectivity.bicep \
+            --parameters \
+            env=${{ vars.ENV }} \
+            pluginName=${{ vars.PLUGIN_NAME }} \
+            mcpHubVNetId=${MCP_HUB_VNET_ID} \
+            mcpDnsZoneNames="${{ vars.MCP_DNS_ZONE_NAMES }}" \
+            mcpClientVNetId=${CLIENT_HUB_VNET_ID} \
+            mcpHubFirewallIp=${MCP_HUB_FIREWALL_IP}

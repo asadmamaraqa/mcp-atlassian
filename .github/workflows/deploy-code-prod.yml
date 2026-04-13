@@ -1,0 +1,86 @@
+# See README.md for secrets and variables
+name: Deploy Code - prod
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    environment: prod
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check required secrets/vars
+        shell: bash
+        run: |
+          set -e
+          [ -z "${{ secrets.CICD_CLIENT_ID }}" ] && ( echo "CICD_CLIENT_ID secret required"; exit 1; )
+          [ -z "${{ vars.AZURE_SUBSCRIPTION_ID }}" ] && ( echo "AZURE_SUBSCRIPTION_ID var required"; exit 1; )
+          [ -z "${{ vars.AZURE_TENANT_ID }}" ] && ( echo "AZURE_TENANT_ID var required"; exit 1; )
+          [ -z "${{ vars.RESOURCE_GROUP }}" ] && ( echo "RESOURCE_GROUP var required"; exit 1; )
+          [ -z "${{ vars.AZURE_LOCATION }}" ] && ( echo "AZURE_LOCATION var required"; exit 1; )
+          [ -z "${{ vars.ACR_NAME }}" ] && ( echo "ACR_NAME var required"; exit 1; )
+          [ -z "${{ vars.IMAGE_NAME }}" ] && ( echo "IMAGE_NAME var required (e.g. mcp-bridge)"; exit 1; )
+          [ -z "${{ vars.PLUGIN_NAME }}" ] && ( echo "PLUGIN_NAME var required (must match infra, e.g. github)"; exit 1; )
+          [ -z "${{ vars.PLUGIN_VNET_CIDR_B }}" ] && ( echo "PLUGIN_VNET_CIDR_B var required"; exit 1; )
+          [ -z "${{ vars.CONTAINER_PORT }}" ] && ( echo "CONTAINER_PORT var required"; exit 1; )
+          exit 0
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Azure (OIDC)
+        uses: Azure/login@v2
+        with:
+          client-id: ${{ secrets.CICD_CLIENT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+
+      - name: Set subscription (explicit)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          az account set --subscription "${{ vars.AZURE_SUBSCRIPTION_ID }}"
+          az account show -o table
+
+      - name: Build and push image to ACR
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -f Dockerfile
+          az acr login --name "${{ vars.ACR_NAME }}"
+
+          IMG="${{ vars.ACR_NAME }}.azurecr.io/${{ vars.IMAGE_NAME }}"
+
+          docker build -t "${IMG}:${GITHUB_SHA}" -f Dockerfile .
+          docker push "${IMG}:${GITHUB_SHA}"
+
+          docker tag "${IMG}:${GITHUB_SHA}" "${IMG}:latest"
+          docker push "${IMG}:latest"
+
+      - name: Redeploy app via Bicep
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ACR_PASSWORD="$(az acr credential show -n "${{ vars.ACR_NAME }}" --query "passwords[0].value" -o tsv)"
+
+          az deployment group create \
+            --name "${{ vars.PLUGIN_NAME }}-code-prod-${GITHUB_RUN_NUMBER}" \
+            --mode Incremental \
+            --resource-group "${{ vars.RESOURCE_GROUP }}" \
+            --template-file infra/bicep/main.bicep \
+            --parameters \
+              env=prod \
+              location="${{ vars.AZURE_LOCATION }}" \
+              pluginVnetCidrB=${{ vars.PLUGIN_VNET_CIDR_B }} \
+              pluginName="${{ vars.PLUGIN_NAME }}" \
+              mcpServerImage="${{ vars.IMAGE_NAME }}" \
+              mcpServerImagePort=${{ vars.CONTAINER_PORT }} \
+              mcpImageTag="${GITHUB_SHA}" \
+              acrName="${{ vars.ACR_NAME }}" \
+              acrPassword="${ACR_PASSWORD}"
+

@@ -29,6 +29,53 @@ if TYPE_CHECKING:
 logger = logging.getLogger("mcp-atlassian.servers.dependencies")
 
 
+def _parse_filter_values(raw_value: Any) -> set[str]:
+    if raw_value is None:
+        return set()
+
+    if isinstance(raw_value, str):
+        candidates = raw_value.split(",")
+    elif isinstance(raw_value, (list, tuple, set)):
+        candidates = raw_value
+    else:
+        candidates = [raw_value]
+
+    normalized: set[str] = set()
+    for candidate in candidates:
+        value = str(candidate).strip()
+        if value:
+            normalized.add(value.upper())
+    return normalized
+
+
+def _apply_request_preferences(
+    request: Request,
+    spec: _ServiceSpec,
+    user_config: Any,
+) -> Any:
+    if spec.name != "Jira":
+        return user_config
+
+    selected_project = getattr(request.state, "user_selected_jira_project", None)
+    if not selected_project:
+        return user_config
+
+    normalized_project = str(selected_project).strip().upper()
+    if not normalized_project:
+        return user_config
+
+    allowed_projects = _parse_filter_values(getattr(user_config, "projects_filter", None))
+    if allowed_projects and normalized_project not in allowed_projects:
+        logger.warning(
+            "Ignoring selected Jira project '%s' because it is outside the configured project filter",
+            normalized_project,
+        )
+        return user_config
+
+    user_config.projects_filter = normalized_project
+    return user_config
+
+
 # ---------------------------------------------------------------------------
 # Service specification for generic fetcher resolution
 # ---------------------------------------------------------------------------
@@ -584,6 +631,7 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 auth_type="basic",
                 credentials=credentials,
             )
+            user_config = _apply_request_preferences(request, spec, user_config)
             return _create_and_validate(
                 request,
                 spec,
@@ -633,6 +681,7 @@ async def _get_fetcher(ctx: Context, spec: _ServiceSpec) -> Any:
                 credentials=credentials,
                 cloud_id=user_cloud_id,
             )
+            user_config = _apply_request_preferences(request, spec, user_config)
             return _create_and_validate(
                 request,
                 spec,

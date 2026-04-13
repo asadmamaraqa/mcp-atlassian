@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -405,6 +406,82 @@ class TestUserTokenMiddleware:
         passed_scope = middleware.app.call_args[0][0]
         assert passed_scope["state"]["user_atlassian_token"] == "my-pat-token"
         assert passed_scope["state"]["user_atlassian_auth_type"] == "pat"
+
+    @pytest.mark.anyio
+    @patch("mcp_atlassian.servers.main.get_functionai_oauth_bridge")
+    async def test_session_preferences_are_added_to_scope(
+        self,
+        mock_get_bridge,
+        middleware,
+        mock_scope,
+        mock_receive,
+        mock_send,
+    ):
+        """Resolved MCP sessions should populate project and Confluence UI preferences."""
+        mock_scope["headers"] = [(b"cookie", b"mcp-session-id=session-123")]
+        mock_bridge = MagicMock()
+        mock_bridge.resolve_session.return_value = SimpleNamespace(
+            access_token="oauth-token",
+            cloud_id="cloud-123",
+            user_id="user-123",
+            selected_jira_project="GENAILAB",
+            show_confluence=False,
+        )
+        mock_get_bridge.return_value = mock_bridge
+
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        middleware.app.assert_called_once()
+        passed_scope = middleware.app.call_args[0][0]
+        assert passed_scope["state"]["user_atlassian_token"] == "oauth-token"
+        assert passed_scope["state"]["user_selected_jira_project"] == "GENAILAB"
+        assert passed_scope["state"]["user_show_confluence"] is False
+
+
+@pytest.mark.anyio
+@patch("mcp_atlassian.servers.main._resolve_frontend_app_context")
+@patch("mcp_atlassian.servers.main.get_functionai_oauth_bridge")
+async def test_frontend_preferences_route_updates_session_preferences(
+    mock_get_bridge,
+    mock_resolve_app_context,
+):
+    """The frontend preference route should persist selected Jira project and UI visibility."""
+    mock_resolve_app_context.return_value = SimpleNamespace(
+        full_jira_config=SimpleNamespace(projects_filter="GENAILAB,OTHER"),
+        full_confluence_config=None,
+    )
+    updated_session = SimpleNamespace(
+        selected_jira_project="GENAILAB",
+        show_confluence=False,
+    )
+    mock_bridge = MagicMock()
+    mock_bridge.get_session_id_from_request.return_value = "session-123"
+    mock_bridge.resolve_session.return_value = updated_session
+    mock_bridge.update_session_preferences.return_value = updated_session
+    mock_get_bridge.return_value = mock_bridge
+
+    app = main_mcp.http_app()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/frontend/preferences",
+            headers={"Cookie": "mcp-session-id=session-123"},
+            json={
+                "selected_jira_project": "GENAILAB",
+                "show_confluence": False,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "selected_jira_project": "GENAILAB",
+        "show_confluence": False,
+    }
+    mock_bridge.update_session_preferences.assert_called_once_with(
+        "session-123",
+        selected_jira_project="GENAILAB",
+        show_confluence=False,
+    )
 
     @pytest.mark.anyio
     async def test_basic_auth_header_extraction_success(

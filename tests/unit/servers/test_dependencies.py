@@ -1288,6 +1288,45 @@ class TestBasicAuthMultiUser:
         assert called_config.api_token == "user-api-token"
 
     @patch("mcp_atlassian.servers.dependencies.get_http_request")
+    @patch("mcp_atlassian.servers.dependencies.JiraFetcher")
+    async def test_selected_jira_project_scopes_user_fetcher(
+        self,
+        mock_jira_fetcher_class,
+        mock_get_http_request,
+        mock_context,
+        mock_request,
+        config_factory,
+    ):
+        """A selected Jira project in request state should override the fetcher scope."""
+        mock_request.state.jira_fetcher = None
+        mock_request.state.confluence_fetcher = None
+        mock_request.state.atlassian_service_headers = {}
+        mock_request.state.user_atlassian_auth_type = "basic"
+        mock_request.state.user_atlassian_email = "user@example.com"
+        mock_request.state.user_atlassian_api_token = "user-api-token"
+        mock_request.state.user_atlassian_token = None
+        mock_request.state.user_atlassian_cloud_id = None
+        mock_request.state.user_selected_jira_project = "GENAILAB"
+        mock_get_http_request.return_value = mock_request
+
+        app_context = config_factory.create_app_context(
+            jira_config=config_factory.create_jira_config(
+                auth_type="basic",
+                projects_filter="GENAILAB,OTHER",
+            )
+        )
+        _setup_mock_context(mock_context, app_context)
+
+        mock_fetcher = _create_mock_fetcher(JiraFetcher)
+        mock_jira_fetcher_class.return_value = mock_fetcher
+
+        result = await get_jira_fetcher(mock_context)
+
+        assert result == mock_fetcher
+        called_config = mock_jira_fetcher_class.call_args[1]["config"]
+        assert called_config.projects_filter == "GENAILAB"
+
+    @patch("mcp_atlassian.servers.dependencies.get_http_request")
     @patch("mcp_atlassian.servers.dependencies.ConfluenceFetcher")
     async def test_confluence_basic_auth_fetcher_creation(
         self,

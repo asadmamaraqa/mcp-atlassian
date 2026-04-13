@@ -35,7 +35,12 @@ PROJECT_KEY_PATTERN = r"^[A-Z][A-Z0-9_]+$"
 
 jira_mcp = FastMCP(
     name="Jira MCP Service",
-    instructions="Provides tools for interacting with Atlassian Jira.",
+    instructions=(
+        "Provides tools for interacting with Atlassian Jira. "
+        "For generic requests like 'what projects do we have' or 'list projects', "
+        "use project-listing tools first, then project issue listing tools for "
+        "ticket queries."
+    ),
 )
 
 
@@ -2479,6 +2484,28 @@ async def get_all_projects(
         ]
 
     return json.dumps(projects, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(
+    tags={"jira", "read", "toolset:jira_projects"},
+    annotations={"title": "List Projects", "readOnlyHint": True},
+)
+async def list_projects(
+    ctx: Context,
+    include_archived: Annotated[
+        bool,
+        Field(
+            description="Whether to include archived projects in the results",
+            default=False,
+        ),
+    ] = False,
+) -> str:
+    """Alias for get_all_projects to improve discoverability for generic prompts.
+
+    Some clients ask for plain "projects" instead of Jira-specific wording.
+    This alias keeps behavior identical while exposing a more generic tool name.
+    """
+    return await get_all_projects(ctx, include_archived=include_archived)
 
 
 @jira_mcp.tool(

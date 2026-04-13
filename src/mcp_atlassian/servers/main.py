@@ -4,11 +4,14 @@ import base64
 import json
 import logging
 import os
+from http.cookies import CookieError, SimpleCookie
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 
+import anyio
+import requests
 from cachetools import TTLCache
 from fastmcp import FastMCP
 from fastmcp import settings as fastmcp_settings
@@ -18,7 +21,7 @@ from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
 from starlette.middleware import Middleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mcp_atlassian.confluence import ConfluenceFetcher
@@ -46,8 +49,16 @@ from mcp_atlassian.utils.urls import is_atlassian_cloud_url, validate_url_for_ss
 from .client_storage import build_oauth_client_storage_from_env
 from .confluence import confluence_mcp
 from .context import MainAppContext
+from .frontend_resource import (
+    build_confluence_fetcher_for_request,
+    build_frontend_payload,
+    build_frontend_resource_script,
+    build_jira_fetcher_for_request,
+)
+from .functionai_oauth import SESSION_COOKIE_NAME, get_functionai_oauth_bridge
 from .jira import jira_mcp
 from .oauth_proxy import HardenedOAuthProxy, parse_env_list
+from .resources import register_atlassian_resources
 
 logger = logging.getLogger("mcp-atlassian.server.main")
 
@@ -365,6 +376,100 @@ token_validation_cache: TTLCache[
 ] = TTLCache(maxsize=100, ttl=300)
 
 
+def _parse_filter_values(raw_value: Any) -> set[str]:
+    if raw_value is None:
+        return set()
+
+    if isinstance(raw_value, str):
+        values = raw_value.split(",")
+    elif isinstance(raw_value, (list, tuple, set)):
+        values = raw_value
+    else:
+        values = [raw_value]
+
+    normalized: set[str] = set()
+    for value in values:
+        text = str(value).strip()
+        if text:
+            normalized.add(text.upper())
+    return normalized
+
+
+def _apply_scope_state_from_session(state: dict[str, Any], session: Any) -> None:
+    state["user_atlassian_token"] = session.access_token
+    state["user_atlassian_auth_type"] = "oauth"
+    state["user_atlassian_cloud_id"] = session.cloud_id
+    state["user_selected_jira_project"] = getattr(
+        session, "selected_jira_project", None
+    )
+    state["user_show_confluence"] = getattr(session, "show_confluence", True)
+
+
+def _apply_request_state_from_session(request: Request, session: Any) -> None:
+    request.state.user_atlassian_token = session.access_token
+    request.state.user_atlassian_auth_type = "oauth"
+    request.state.user_atlassian_cloud_id = session.cloud_id
+    request.state.user_selected_jira_project = getattr(
+        session, "selected_jira_project", None
+    )
+    request.state.user_show_confluence = getattr(session, "show_confluence", True)
+
+
+def _resolve_bridge_session_from_request(
+    request: Request,
+    bridge: Any,
+) -> tuple[str | None, Any | None]:
+    session_id = bridge.get_session_id_from_request(request)
+    auth_header = (request.headers.get("authorization") or "").strip()
+    if session_id is None and auth_header.startswith("Bearer "):
+        bearer_value = auth_header[7:].strip()
+        session_id = bearer_value or None
+
+    if not session_id:
+        return None, None
+
+    return session_id, bridge.resolve_session(session_id)
+
+
+def _resolve_frontend_app_context(request: Request) -> MainAppContext:
+    lifespan_state = getattr(request.app.state, "lifespan_context", {})
+    app_context = (
+        lifespan_state.get("app_lifespan_context")
+        if isinstance(lifespan_state, dict)
+        else None
+    )
+
+    if app_context is not None:
+        return app_context
+
+    loaded_jira_config = None
+    loaded_confluence_config = None
+
+    if get_available_services().get("jira"):
+        try:
+            candidate = JiraConfig.from_env()
+            if candidate.is_auth_configured():
+                loaded_jira_config = candidate
+        except Exception:
+            loaded_jira_config = None
+
+    if get_available_services().get("confluence"):
+        try:
+            candidate = ConfluenceConfig.from_env()
+            if candidate.is_auth_configured():
+                loaded_confluence_config = candidate
+        except Exception:
+            loaded_confluence_config = None
+
+    return MainAppContext(
+        full_jira_config=loaded_jira_config,
+        full_confluence_config=loaded_confluence_config,
+        read_only=is_read_only_mode(),
+        enabled_tools=get_enabled_tools(),
+        enabled_toolsets=get_enabled_toolsets(),
+    )
+
+
 class UserTokenMiddleware:
     """ASGI-compliant middleware to extract Atlassian user tokens/credentials.
 
@@ -488,12 +593,14 @@ class UserTokenMiddleware:
             headers = dict(scope.get("headers", []))
             auth_header = headers.get(b"authorization")
             cloud_id_header = headers.get(b"x-atlassian-cloud-id")
+            cookie_header = headers.get(b"cookie")
 
             # Convert bytes to strings (ASGI headers are always bytes)
             auth_header_str = auth_header.decode("latin-1") if auth_header else None
             cloud_id_str = (
                 cloud_id_header.decode("latin-1") if cloud_id_header else None
             )
+            cookie_header_str = cookie_header.decode("latin-1") if cookie_header else None
 
             # Extract additional Atlassian service headers for service availability detection
             jira_token_header = headers.get(b"x-atlassian-jira-personal-token")
@@ -557,13 +664,13 @@ class UserTokenMiddleware:
                     f"UserTokenMiddleware: Extracted service headers: {list(service_headers.keys())}"
                 )
 
-            # Log mcp-session-id for debugging
-            mcp_session_id = headers.get(b"mcp-session-id")
-            if mcp_session_id:
-                session_id_str = mcp_session_id.decode("latin-1")
-                logger.debug(
-                    f"UserTokenMiddleware: MCP-Session-ID header found: {session_id_str}"
-                )
+            session_id_str = None
+            if cookie_header_str:
+                session_id_str = self._get_mcp_session_id_from_cookie(cookie_header_str)
+                if session_id_str:
+                    logger.debug(
+                        "UserTokenMiddleware: MCP session cookie found"
+                    )
 
             logger.debug(
                 f"UserTokenMiddleware: Processing auth for {scope.get('path')}, "
@@ -581,6 +688,23 @@ class UserTokenMiddleware:
             # Process Authorization header
             if auth_header_str:
                 self._parse_auth_header(auth_header_str, scope)
+            elif session_id_str:
+                bridge = get_functionai_oauth_bridge()
+                if bridge is None:
+                    logger.debug(
+                        "UserTokenMiddleware: Ignoring MCP session header because FunctionAI OAuth bridge is disabled"
+                    )
+                else:
+                    session = bridge.resolve_session(session_id_str)
+                    if session is None:
+                        scope["state"]["auth_validation_error"] = (
+                            "Unauthorized: Invalid or expired MCP session"
+                        )
+                        return
+                    _apply_scope_state_from_session(scope["state"], session)
+                    logger.debug(
+                        "UserTokenMiddleware: Resolved OAuth token from MCP session cookie"
+                    )
             else:
                 logger.debug("UserTokenMiddleware: No Authorization header provided")
                 # If service headers are present without Authorization header, set PAT auth type
@@ -598,6 +722,24 @@ class UserTokenMiddleware:
             logger.error(f"Error processing authentication headers: {e}", exc_info=True)
             scope["state"]["auth_validation_error"] = "Authentication processing error"
 
+    @staticmethod
+    def _get_mcp_session_id_from_cookie(cookie_header: str | None) -> str | None:
+        if not cookie_header:
+            return None
+
+        cookie = SimpleCookie()
+        try:
+            cookie.load(cookie_header)
+        except CookieError:
+            return None
+
+        morsel = cookie.get(SESSION_COOKIE_NAME)
+        if morsel is None:
+            return None
+
+        value = morsel.value.strip()
+        return value or None
+
     def _parse_auth_header(self, auth_header: str, scope: Scope) -> None:
         """Parse the Authorization header and store credentials in scope state."""
         # Check prefix BEFORE stripping to preserve "Bearer " / "Token " matching
@@ -608,12 +750,20 @@ class UserTokenMiddleware:
                     "Unauthorized: Empty Bearer token"
                 )
             else:
-                scope["state"]["user_atlassian_token"] = token
-                scope["state"]["user_atlassian_auth_type"] = "oauth"
-                logger.debug(
-                    "UserTokenMiddleware: Bearer token extracted (masked): "
-                    f"...{mask_sensitive(token, 8)}"
-                )
+                bridge = get_functionai_oauth_bridge()
+                session = bridge.resolve_session(token) if bridge is not None else None
+                if session is not None:
+                    _apply_scope_state_from_session(scope["state"], session)
+                    logger.debug(
+                        "UserTokenMiddleware: Resolved OAuth token from Bearer session ID"
+                    )
+                else:
+                    scope["state"]["user_atlassian_token"] = token
+                    scope["state"]["user_atlassian_auth_type"] = "oauth"
+                    logger.debug(
+                        "UserTokenMiddleware: Bearer token extracted (masked): "
+                        f"...{mask_sensitive(token, 8)}"
+                    )
 
         elif auth_header.startswith("Token "):
             token = auth_header[6:].strip()  # Remove "Token " prefix and strip token
@@ -721,6 +871,14 @@ def _is_cloud_instance(instance_url: str) -> bool:
     return is_atlassian_cloud_url(instance_url) or parsed_host == "auth.atlassian.com"
 
 
+def _is_functionai_redirect_uri(redirect_uri: str | None) -> bool:
+    if not redirect_uri:
+        return False
+
+    callback_path = (urlparse(redirect_uri).path or "").rstrip("/")
+    return callback_path in {"/mcp/auth/callback", "/api/mcp/auth/callback"}
+
+
 def _build_auth_provider() -> HardenedOAuthProxy | None:
     """Create an opt-in OAuth proxy auth provider with DCR + discovery support."""
     if not is_env_truthy(OAUTH_PROXY_ENABLE_ENV, "false"):
@@ -747,6 +905,12 @@ def _build_auth_provider() -> HardenedOAuthProxy | None:
     )
     redirect_uri = os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI")
     scope_env = os.getenv("ATLASSIAN_OAUTH_SCOPE", "")
+
+    if _is_functionai_redirect_uri(redirect_uri):
+        logger.info(
+            "Detected FunctionAI OAuth callback; disabling MCP protocol auth provider and relying on FunctionAI session cookies for MCP requests."
+        )
+        return None
 
     if not all([instance_url, client_id, client_secret, redirect_uri]):
         logger.warning(
@@ -817,11 +981,310 @@ main_mcp = AtlassianMCP(
 )
 main_mcp.mount(jira_mcp, "jira")
 main_mcp.mount(confluence_mcp, "confluence")
+register_atlassian_resources(main_mcp)
 
 
 @main_mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
 async def _health_check_route(request: Request) -> JSONResponse:
     return await health_check(request)
+
+
+@main_mcp.custom_route("/api/auth/initiate", methods=["POST"], include_in_schema=False)
+async def _functionai_auth_initiate(request: Request) -> JSONResponse:
+    bridge = get_functionai_oauth_bridge()
+    if bridge is None:
+        return JSONResponse(
+            {"error": "Atlassian OAuth compatibility bridge is not configured"},
+            status_code=503,
+        )
+
+    user_id: str | None = None
+    try:
+        payload = await request.json()
+        if isinstance(payload, dict):
+            raw_user_id = payload.get("user_id")
+            if raw_user_id is not None:
+                user_id = str(raw_user_id).strip() or None
+    except json.JSONDecodeError:
+        user_id = None
+
+    auth_url = bridge.build_initiate_url(request, user_id)
+    return JSONResponse({"auth_url": auth_url})
+
+
+@main_mcp.custom_route("/api/auth/authorize", methods=["GET"], include_in_schema=False)
+async def _functionai_auth_authorize(request: Request) -> JSONResponse:
+    bridge = get_functionai_oauth_bridge()
+    if bridge is None:
+        return JSONResponse(
+            {"error": "Atlassian OAuth compatibility bridge is not configured"},
+            status_code=503,
+        )
+
+    state = (request.query_params.get("state") or "").strip()
+    if not state:
+        return JSONResponse({"error": "Missing OAuth state"}, status_code=400)
+
+    try:
+        authorization_url = bridge.build_authorization_url(request, state)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    return RedirectResponse(url=authorization_url, status_code=307)
+
+
+@main_mcp.custom_route(
+    "/api/auth/atlassian-callback", methods=["GET"], include_in_schema=False
+)
+async def _functionai_auth_atlassian_callback(request: Request) -> JSONResponse:
+    bridge = get_functionai_oauth_bridge()
+    if bridge is None:
+        return JSONResponse(
+            {"error": "Atlassian OAuth compatibility bridge is not configured"},
+            status_code=503,
+        )
+
+    code = (request.query_params.get("code") or "").strip()
+    state = (request.query_params.get("state") or "").strip()
+    if not code or not state:
+        return JSONResponse(
+            {"error": "Missing OAuth callback parameters"},
+            status_code=400,
+        )
+
+    return RedirectResponse(
+        url=bridge.build_functionai_callback_url(code, state),
+        status_code=307,
+    )
+
+
+@main_mcp.custom_route("/api/auth/callback", methods=["GET"], include_in_schema=False)
+async def _functionai_auth_callback(request: Request) -> JSONResponse:
+    bridge = get_functionai_oauth_bridge()
+    if bridge is None:
+        return JSONResponse(
+            {"error": "Atlassian OAuth compatibility bridge is not configured"},
+            status_code=503,
+        )
+
+    code = (request.query_params.get("code") or "").strip()
+    state = (request.query_params.get("state") or "").strip()
+    user_id = (request.query_params.get("user_id") or "").strip() or None
+
+    if not code or not state:
+        return JSONResponse(
+            {"error": "Missing OAuth callback parameters"},
+            status_code=400,
+        )
+
+    try:
+        session = await anyio.to_thread.run_sync(
+            lambda: bridge.complete_authorization(
+                code=code,
+                state=state,
+                user_id=user_id,
+                request=request,
+            )
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except requests.HTTPError as exc:
+        logger.error("FunctionAI OAuth callback failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": "OAuth token exchange failed"}, status_code=502)
+
+    response = JSONResponse({"success": True})
+    bridge.attach_session_cookie(response, request, session)
+    return response
+
+
+@main_mcp.custom_route("/api/auth/refresh", methods=["POST"], include_in_schema=False)
+async def _functionai_auth_refresh(request: Request) -> JSONResponse:
+    bridge = get_functionai_oauth_bridge()
+    if bridge is None:
+        return JSONResponse(
+            {"error": "Atlassian OAuth compatibility bridge is not configured"},
+            status_code=503,
+        )
+
+    session_id = bridge.get_session_id_from_request(request)
+    if not session_id:
+        return JSONResponse({"error": "Missing MCP session cookie"}, status_code=401)
+
+    try:
+        session = await anyio.to_thread.run_sync(bridge.refresh_session, session_id)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=401)
+    except requests.HTTPError as exc:
+        logger.error("FunctionAI OAuth refresh failed: %s", exc, exc_info=True)
+        return JSONResponse({"error": "OAuth token refresh failed"}, status_code=502)
+
+    response = JSONResponse({"success": True})
+    bridge.attach_session_cookie(response, request, session)
+    return response
+
+
+@main_mcp.custom_route(
+    "/api/frontend/preferences", methods=["POST"], include_in_schema=False
+)
+async def _frontend_preferences(request: Request) -> JSONResponse:
+    bridge = get_functionai_oauth_bridge()
+    if bridge is None:
+        return JSONResponse(
+            {"error": "Atlassian OAuth compatibility bridge is not configured"},
+            status_code=503,
+        )
+
+    session_id, session = _resolve_bridge_session_from_request(request, bridge)
+    if session_id is None or session is None:
+        return JSONResponse(
+            {"error": "Invalid or expired MCP session"},
+            status_code=401,
+        )
+
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        payload = {}
+
+    if not isinstance(payload, dict):
+        return JSONResponse(
+            {"error": "Preferences payload must be a JSON object"},
+            status_code=400,
+        )
+
+    selected_project_supplied = "selected_jira_project" in payload
+    show_confluence_supplied = "show_confluence" in payload
+    selected_project = payload.get("selected_jira_project")
+
+    if (
+        not selected_project_supplied
+        and not show_confluence_supplied
+    ):
+        return JSONResponse(
+            {"error": "No frontend preferences were provided"},
+            status_code=400,
+        )
+
+    app_context = _resolve_frontend_app_context(request)
+    jira_config = getattr(app_context, "full_jira_config", None)
+    allowed_projects = _parse_filter_values(
+        getattr(jira_config, "projects_filter", None) if jira_config else None
+    )
+    if selected_project_supplied and selected_project not in (None, ""):
+        normalized_project = str(selected_project).strip().upper()
+        if allowed_projects and normalized_project not in allowed_projects:
+            return JSONResponse(
+                {
+                    "error": (
+                        f"Project '{normalized_project}' is outside the configured Jira project filter"
+                    )
+                },
+                status_code=400,
+            )
+
+    try:
+        preference_updates: dict[str, Any] = {}
+        if selected_project_supplied:
+            preference_updates["selected_jira_project"] = selected_project
+        if show_confluence_supplied:
+            preference_updates["show_confluence"] = payload.get("show_confluence")
+
+        updated_session = await anyio.to_thread.run_sync(
+            lambda: bridge.update_session_preferences(session_id, **preference_updates)
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    return JSONResponse(
+        {
+            "selected_jira_project": updated_session.selected_jira_project,
+            "show_confluence": updated_session.show_confluence,
+        }
+    )
+
+
+@main_mcp.custom_route(
+    "/api/resources/frontend", methods=["GET"], include_in_schema=False
+)
+async def _frontend_resource(request: Request) -> PlainTextResponse:
+    bridge = get_functionai_oauth_bridge()
+    session = None
+    if bridge is not None and not getattr(request.state, "user_atlassian_token", None):
+        session_id, session = _resolve_bridge_session_from_request(request, bridge)
+        auth_header = (request.headers.get("authorization") or "").strip()
+        logger.info(
+            "Frontend resource requested (has_cookie=%s, has_auth_header=%s)",
+            bool(session_id),
+            auth_header.startswith("Bearer "),
+        )
+        if session_id:
+            if session is None:
+                logger.warning(
+                    "Frontend resource denied: MCP session could not be resolved"
+                )
+                return PlainTextResponse(
+                    "Invalid or expired MCP session",
+                    status_code=401,
+                )
+            _apply_request_state_from_session(request, session)
+            logger.info(
+                "Frontend resource resolved Atlassian MCP session for cloud_id=%s",
+                session.cloud_id or "missing",
+            )
+        else:
+            logger.info(
+                "Frontend resource falling back to unauthenticated payload"
+            )
+
+    theme = (request.query_params.get("theme") or "light").strip().lower()
+    if theme not in {"light", "dark"}:
+        theme = "light"
+
+    app_context = _resolve_frontend_app_context(request)
+
+    jira_fetcher = None
+    confluence_fetcher = None
+
+    jira_config = getattr(app_context, "full_jira_config", None) if app_context else None
+    if jira_config is not None:
+        try:
+            jira_fetcher = build_jira_fetcher_for_request(request, jira_config)
+        except ValueError:
+            if jira_config.auth_type != "oauth":
+                jira_fetcher = JiraFetcher(config=jira_config)
+
+    confluence_config = (
+        getattr(app_context, "full_confluence_config", None) if app_context else None
+    )
+    if confluence_config is not None:
+        try:
+            confluence_fetcher = build_confluence_fetcher_for_request(
+                request,
+                confluence_config,
+            )
+        except ValueError:
+            if confluence_config.auth_type != "oauth":
+                confluence_fetcher = ConfluenceFetcher(config=confluence_config)
+
+    selected_project = getattr(
+        request.state,
+        "user_selected_jira_project",
+        getattr(session, "selected_jira_project", None) if session else None,
+    )
+    show_confluence = getattr(
+        request.state,
+        "user_show_confluence",
+        getattr(session, "show_confluence", True) if session else True,
+    )
+    payload = build_frontend_payload(
+        jira_fetcher,
+        confluence_fetcher,
+        selected_jira_project=selected_project,
+        show_confluence=show_confluence,
+        preferences_supported=session is not None,
+    )
+    script = build_frontend_resource_script(payload, theme)
+    return PlainTextResponse(script, media_type="application/javascript")
 
 
 logger.info("Added /healthz endpoint for Kubernetes probes")
