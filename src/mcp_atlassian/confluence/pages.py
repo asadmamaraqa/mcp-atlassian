@@ -3,6 +3,7 @@
 import difflib
 import logging
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import requests
 from requests.exceptions import HTTPError
@@ -18,6 +19,54 @@ logger = logging.getLogger("mcp-atlassian")
 
 class PagesMixin(ConfluenceClient):
     """Mixin for Confluence page operations."""
+
+    @staticmethod
+    def _extract_v2_cursor(next_link: str | None) -> str | None:
+        """Extract a cursor token from a v2 pagination link."""
+        if not next_link:
+            return None
+
+        parsed = urlparse(next_link)
+        cursor_values = parse_qs(parsed.query).get("cursor")
+        if cursor_values:
+            return cursor_values[0]
+
+        return next_link
+
+    @staticmethod
+    def _calculate_page_depth(
+        page_id: str,
+        parent_by_id: dict[str, str | None],
+        depth_cache: dict[str, int],
+        visiting: set[str] | None = None,
+    ) -> int:
+        """Calculate depth from a parent mapping with cycle protection."""
+        if page_id in depth_cache:
+            return depth_cache[page_id]
+
+        if visiting is None:
+            visiting = set()
+        if page_id in visiting:
+            return 0
+
+        visiting.add(page_id)
+        parent_id = parent_by_id.get(page_id)
+
+        if not parent_id:
+            depth = 0
+        elif parent_id not in parent_by_id:
+            depth = 1
+        else:
+            depth = (
+                PagesMixin._calculate_page_depth(
+                    parent_id, parent_by_id, depth_cache, visiting
+                )
+                + 1
+            )
+
+        visiting.remove(page_id)
+        depth_cache[page_id] = depth
+        return depth
 
     @property
     def _v2_adapter(self) -> ConfluenceV2Adapter | None:
@@ -854,29 +903,54 @@ class PagesMixin(ConfluenceClient):
             Exception: If there is an error fetching pages
         """
         try:
-            # Paginate using the raw API to access _links.next for reliable
-            # truncation detection. The higher-level get_all_pages_from_space()
-            # has a broken termination condition when limit > server-side cap.
             page_size = 200
-            start = 0
             all_pages: list[dict[str, Any]] = []
             next_link: str | None = None
+            next_start: int | str | None = None
 
-            while len(all_pages) < limit:
-                fetch_limit = min(page_size, limit - len(all_pages))
-                response = self.confluence.get_all_pages_from_space_raw(
-                    space=space_key,
-                    start=start,
-                    limit=fetch_limit,
-                    expand="ancestors",
-                )
-                batch = response.get("results", [])
-                all_pages.extend(batch)
+            v2_adapter = self._v2_adapter
+            if v2_adapter:
+                cursor: str | None = None
 
-                next_link = response.get("_links", {}).get("next")
-                if not batch or not next_link:
-                    break
-                start += len(batch)
+                while len(all_pages) < limit:
+                    fetch_limit = min(page_size, limit - len(all_pages))
+                    response = v2_adapter.list_space_pages(
+                        space_key=space_key,
+                        cursor=cursor,
+                        limit=fetch_limit,
+                    )
+                    batch = response.get("results", [])
+                    all_pages.extend(batch)
+
+                    next_link = response.get("_links", {}).get("next")
+                    next_cursor = self._extract_v2_cursor(next_link)
+                    if not batch or not next_cursor:
+                        break
+
+                    cursor = next_cursor
+                    next_start = next_cursor
+            else:
+                # Paginate using the raw API to access _links.next for reliable
+                # truncation detection. The higher-level get_all_pages_from_space()
+                # has a broken termination condition when limit > server-side cap.
+                start = 0
+
+                while len(all_pages) < limit:
+                    fetch_limit = min(page_size, limit - len(all_pages))
+                    response = self.confluence.get_all_pages_from_space_raw(
+                        space=space_key,
+                        start=start,
+                        limit=fetch_limit,
+                        expand="ancestors",
+                    )
+                    batch = response.get("results", [])
+                    all_pages.extend(batch)
+
+                    next_link = response.get("_links", {}).get("next")
+                    if not batch or not next_link:
+                        break
+                    start += len(batch)
+                    next_start = start
 
             has_more = len(all_pages) >= limit and bool(next_link)
 
@@ -888,24 +962,24 @@ class PagesMixin(ConfluenceClient):
                     "pages": [],
                 }
 
-            # Build flat list with parent_id and depth
+            # Build flat list with parent_id. Depth is derived afterwards so the
+            # v2 parentId-based response can be handled without additional API calls.
             result_pages = []
 
             for page in all_pages:
                 page_id = page.get("id")
                 title = page.get("title", "Untitled")
 
-                # Position is auto-included via extensions in the v1 API
-                position = page.get("extensions", {}).get("position")
-
-                # Determine parent and depth from ancestors
-                ancestors = page.get("ancestors", [])
-                if ancestors:
-                    parent_id = ancestors[-1].get("id")
-                    depth = len(ancestors)
+                if v2_adapter:
+                    position = page.get("position")
+                    parent_id = page.get("parentId")
                 else:
-                    parent_id = None
-                    depth = 0
+                    position = page.get("extensions", {}).get("position")
+                    ancestors = page.get("ancestors", [])
+                    if ancestors:
+                        parent_id = ancestors[-1].get("id")
+                    else:
+                        parent_id = None
 
                 result_pages.append(
                     {
@@ -913,8 +987,14 @@ class PagesMixin(ConfluenceClient):
                         "title": title,
                         "parent_id": parent_id,
                         "position": position,
-                        "depth": depth,
                     }
+                )
+
+            parent_by_id = {page["id"]: page["parent_id"] for page in result_pages}
+            depth_cache: dict[str, int] = {}
+            for page in result_pages:
+                page["depth"] = self._calculate_page_depth(
+                    page["id"], parent_by_id, depth_cache
                 )
 
             # Sort by depth first (breadth-first), then by position
@@ -933,8 +1013,8 @@ class PagesMixin(ConfluenceClient):
                 "has_more": has_more,
                 "pages": result_pages,
             }
-            if has_more:
-                result["next_start"] = start
+            if has_more and next_start is not None:
+                result["next_start"] = next_start
             return result
 
         except HTTPError:

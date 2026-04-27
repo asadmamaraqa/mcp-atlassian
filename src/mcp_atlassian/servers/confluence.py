@@ -126,6 +126,100 @@ async def search(
 
 @confluence_mcp.tool(
     tags={"confluence", "read", "toolset:confluence_pages"},
+    annotations={"title": "Get Recent Pages", "readOnlyHint": True},
+)
+async def get_recent_pages(
+    ctx: Context,
+    activity: Annotated[
+        str,
+        Field(
+            description=(
+                "Activity type for recent pages. Supported value: 'edited'. "
+                "'visited' is not currently available through the supported "
+                "Confluence REST/CQL APIs."
+            ),
+            default="edited",
+        ),
+    ] = "edited",
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of results (1-50)",
+            default=10,
+            ge=1,
+            le=50,
+        ),
+    ] = 10,
+    days_back: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Optional lookback window in days. Set to null to search across "
+                "all time."
+            ),
+            default=30,
+            ge=1,
+        ),
+    ] = 30,
+    spaces_filter: Annotated[
+        str | None,
+        Field(
+            description=(
+                "(Optional) Comma-separated list of space keys to filter results by. "
+                "Overrides the environment variable CONFLUENCE_SPACES_FILTER if provided. "
+                "Use empty string to disable filtering."
+            ),
+            default=None,
+        ),
+    ] = None,
+) -> str:
+    """Get recent Confluence pages for the current user.
+
+    Currently, the supported implementation uses CQL to list pages the
+    authenticated user recently edited.
+
+    Args:
+        ctx: The FastMCP context.
+        activity: Recent activity type.
+        limit: Maximum number of results.
+        days_back: Optional lookback window in days.
+        spaces_filter: Optional comma-separated list of space keys to filter by.
+
+    Returns:
+        JSON string describing recent pages or a structured error.
+    """
+    confluence_fetcher = await get_confluence_fetcher(ctx)
+
+    try:
+        pages = confluence_fetcher.get_recent_pages(
+            activity=activity,
+            limit=limit,
+            spaces_filter=spaces_filter,
+            days_back=days_back,
+        )
+    except ValueError as e:
+        return json.dumps(
+            {
+                "error": str(e),
+                "activity": activity,
+                "supported_activities": ["edited"],
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    result = {
+        "activity": activity,
+        "count": len(pages),
+        "limit_requested": limit,
+        "days_back": days_back,
+        "results": [page.to_simplified_dict() for page in pages],
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@confluence_mcp.tool(
+    tags={"confluence", "read", "toolset:confluence_pages"},
     annotations={"title": "Get Page", "readOnlyHint": True},
 )
 async def get_page(

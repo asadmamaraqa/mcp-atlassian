@@ -29,6 +29,97 @@ class ConfluenceV2Adapter:
         self.session = session
         self.base_url = base_url
 
+    def list_spaces(self, start: int = 0, limit: int = 10) -> dict[str, Any]:
+        """List spaces using the Confluence REST API v2.
+
+        Args:
+            start: Pagination offset.
+            limit: Maximum number of spaces to return.
+
+        Returns:
+            Parsed JSON response from the v2 spaces endpoint.
+
+        Raises:
+            ValueError: If the API request fails.
+        """
+        try:
+            url = f"{self.base_url}/api/v2/spaces"
+            params = {"limit": limit}
+            if start > 0:
+                params["cursor"] = start
+
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            if "results" not in data:
+                data["results"] = []
+
+            return data
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    "HTTP error listing spaces via v2 API: %s\nResponse: %s",
+                    e,
+                    e.response.text,
+                )
+            else:
+                logger.error("Error listing spaces via v2 API: %s", e)
+            raise ValueError(f"Failed to list spaces via v2 API: {e}") from e
+
+    def list_space_pages(
+        self,
+        space_key: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """List pages for a space using the Confluence REST API v2.
+
+        Args:
+            space_key: Confluence space key.
+            cursor: Optional cursor token from a previous page of results.
+            limit: Maximum number of pages to return.
+
+        Returns:
+            Parsed JSON response from the v2 space pages endpoint.
+
+        Raises:
+            ValueError: If the API request fails.
+        """
+        try:
+            space_id = self._get_space_id(space_key)
+            url = f"{self.base_url}/api/v2/spaces/{space_id}/pages"
+            params: dict[str, Any] = {"limit": limit}
+            if cursor:
+                params["cursor"] = cursor
+
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            if "results" not in data:
+                data["results"] = []
+
+            return data
+        except Exception as e:
+            if isinstance(e, HTTPError) and e.response is not None:
+                logger.error(
+                    "HTTP error listing space pages via v2 API for '%s': %s\nResponse: %s",
+                    space_key,
+                    e,
+                    e.response.text,
+                )
+            else:
+                logger.error(
+                    "Error listing space pages via v2 API for '%s': %s",
+                    space_key,
+                    e,
+                )
+            raise ValueError(
+                f"Failed to list space pages via v2 API for '{space_key}': {e}"
+            ) from e
+
     def _get_space_id(self, space_key: str) -> str:
         """Get space ID from space key using v2 API.
 

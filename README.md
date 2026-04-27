@@ -1,110 +1,101 @@
-# MCP Atlassian
+# Atlassian MCP Server for Function AI
 
-![PyPI Version](https://img.shields.io/pypi/v/mcp-atlassian)
-![PyPI - Downloads](https://img.shields.io/pypi/dm/mcp-atlassian)
-![PePy - Total Downloads](https://static.pepy.tech/personalized-badge/mcp-atlassian?period=total&units=international_system&left_color=grey&right_color=blue&left_text=Total%20Downloads)
-[![Run Tests](https://github.com/sooperset/mcp-atlassian/actions/workflows/tests.yml/badge.svg)](https://github.com/sooperset/mcp-atlassian/actions/workflows/tests.yml)
-![License](https://img.shields.io/github/license/sooperset/mcp-atlassian)
-[![Docs](https://img.shields.io/badge/docs-mintlify-blue)](https://mcp-atlassian.soomiles.com)
+Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira), deployed as a plugin for **[Function AI](https://github.com/solita-internal/function-ai)**.
 
-Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). Supports both Cloud and Server/Data Center deployments.
+Based on [sooperset/mcp-atlassian](https://github.com/sooperset/mcp-atlassian) with custom extensions for Function AI integration: OAuth bridge for per-user Atlassian authentication, frontend resource endpoints for plugin cards, session-backed project/space preferences, and Azure deployment infrastructure.
 
-https://github.com/user-attachments/assets/35303504-14c6-4ae4-913b-7c25ea511c3e
+## Architecture
 
-<details>
-<summary>Confluence Demo</summary>
+This server runs as a Docker container alongside the Function AI backend and exposes MCP tools over **streamable-http** at `/mcp`. Function AI proxies user requests to this server, forwarding per-user OAuth tokens so each user interacts with Jira/Confluence under their own identity.
 
-https://github.com/user-attachments/assets/7fe9c488-ad0c-4876-9b54-120b666bb785
+### Key additions over upstream
 
-</details>
+| Component | Path | Purpose |
+|-----------|------|---------|
+| FunctionAI OAuth bridge | `src/mcp_atlassian/servers/functionai_oauth.py` | Per-user OAuth 2.0 session management, cookie-based session tracking |
+| Frontend resources | `src/mcp_atlassian/servers/frontend_resource.py` | `GET /api/resources/frontend` endpoint for plugin card UI |
+| MCP resources | `src/mcp_atlassian/servers/resources.py` | Browseable Atlassian context via MCP resource URIs |
+| User preferences | via `functionai_oauth.py` | Session-scoped Jira project / Confluence space selection |
+| Dependencies | `src/mcp_atlassian/servers/dependencies.py` | Per-request fetcher creation with user token injection |
+| Azure infra | `infra/bicep/` | Bicep modules for Azure Container Apps deployment |
+| CI/CD | `.github/workflows/` | Deploy pipelines for dev/test/prod (infra, code, connectivity) |
 
-## Quick Start
+## Running Locally
 
-### 1. Get Your API Token
+### Prerequisites
 
-Go to https://id.atlassian.com/manage-profile/security/api-tokens and create a token.
+- Docker
+- An `.env` file with Atlassian credentials (copy from `.env.example`)
 
-> For Server/Data Center, use a Personal Access Token instead. See [Authentication](https://mcp-atlassian.soomiles.com/docs/authentication).
+### Docker
 
-### 2. Configure Your IDE
+```bash
+# Build
+docker build -t atlassian-mcp-local .
 
-Add to your Claude Desktop or Cursor MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "mcp-atlassian": {
-      "command": "uvx",
-      "args": ["mcp-atlassian"],
-      "env": {
-        "JIRA_URL": "https://your-company.atlassian.net",
-        "JIRA_USERNAME": "your.email@company.com",
-        "JIRA_API_TOKEN": "your_api_token",
-        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
-        "CONFLUENCE_USERNAME": "your.email@company.com",
-        "CONFLUENCE_API_TOKEN": "your_api_token"
-      }
-    }
-  }
-}
+# Run
+docker run -d \
+  --name atlassian-mcp-local \
+  -p 8001:8000 \
+  --env-file .env \
+  atlassian-mcp-local \
+  --transport streamable-http \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --path /mcp
 ```
 
-> **Server/Data Center users**: Use `JIRA_PERSONAL_TOKEN` instead of `JIRA_USERNAME` + `JIRA_API_TOKEN`. See [Authentication](https://mcp-atlassian.soomiles.com/docs/authentication) for details.
+The MCP endpoint will be available at `http://localhost:8001/mcp`.
 
-### 3. Start Using
+> **Note:** Function AI backend expects the server on port 8001 locally since the backend itself uses port 8000.
 
-Ask your AI assistant to:
-- **"Find issues assigned to me in PROJ project"**
-- **"Search Confluence for onboarding docs"**
-- **"Create a bug ticket for the login issue"**
-- **"Update the status of PROJ-123 to Done"**
+### Authentication
 
-## Documentation
+The server supports multiple auth methods (in order of precedence):
 
-Full documentation is available at **[mcp-atlassian.soomiles.com](https://mcp-atlassian.soomiles.com)**.
+1. **OAuth 2.0** — per-user tokens forwarded by Function AI as `Authorization: Bearer <signed_session_cookie>`
+2. **API Token** (Cloud) — `JIRA_USERNAME` + `JIRA_API_TOKEN`
+3. **Personal Access Token** (Server/Data Center) — `JIRA_PERSONAL_TOKEN`
 
-Documentation is also available in [llms.txt format](https://llmstxt.org/), which LLMs can consume easily:
-- [`llms.txt`](https://mcp-atlassian.soomiles.com/llms.txt) — documentation sitemap
-- [`llms-full.txt`](https://mcp-atlassian.soomiles.com/llms-full.txt) — complete documentation
+For local development without OAuth, set API token credentials in `.env`. See `.env.example` for all options.
 
-| Topic | Description |
-|-------|-------------|
-| [Installation](https://mcp-atlassian.soomiles.com/docs/installation) | uvx, Docker, pip, from source |
-| [Authentication](https://mcp-atlassian.soomiles.com/docs/authentication) | API tokens, PAT, OAuth 2.0 |
-| [Configuration](https://mcp-atlassian.soomiles.com/docs/configuration) | IDE setup, environment variables |
-| [HTTP Transport](https://mcp-atlassian.soomiles.com/docs/http-transport) | SSE, streamable-http, multi-user |
-| [Tools Reference](https://mcp-atlassian.soomiles.com/docs/tools-reference) | All Jira & Confluence tools |
-| [Troubleshooting](https://mcp-atlassian.soomiles.com/docs/troubleshooting) | Common issues & debugging |
+## Deployment
 
-## Compatibility
+Infrastructure is managed with Azure Bicep and deployed via GitHub Actions workflows:
 
-| Product | Deployment | Support |
-|---------|------------|---------|
-| Confluence | Cloud | Fully supported |
-| Confluence | Server/Data Center | Supported (v6.0+) |
-| Jira | Cloud | Fully supported |
-| Jira | Server/Data Center | Supported (v8.14+) |
+| Workflow | Purpose |
+|----------|---------|
+| `deploy-infra-{env}.yml` | Provision Azure Container Apps, networking, DNS |
+| `deploy-code-{env}.yml` | Build and push Docker image, deploy to Container Apps |
+| `deploy-connectivity-{env}.yml` | Configure private endpoints and DNS zone links |
 
-## Key Tools
+Environments: `dev`, `test`, `prod`.
+
+## Tools
 
 | Jira | Confluence |
 |------|------------|
-| `jira_search` - Search with JQL | `confluence_search` - Search with CQL |
-| `jira_get_issue` - Get issue details | `confluence_get_page` - Get page content |
-| `jira_create_issue` - Create issues | `confluence_create_page` - Create pages |
-| `jira_update_issue` - Update issues | `confluence_update_page` - Update pages |
-| `jira_transition_issue` - Change status | `confluence_add_comment` - Add comments |
+| `jira_search` — Search with JQL | `confluence_search` — Search with CQL |
+| `jira_get_issue` — Get issue details | `confluence_get_page` — Get page content |
+| `jira_create_issue` — Create issues | `confluence_create_page` — Create pages |
+| `jira_update_issue` — Update issues | `confluence_update_page` — Update pages |
+| `jira_transition_issue` — Change status | `confluence_add_comment` — Add comments |
 
-**72 tools total** — See [Tools Reference](https://mcp-atlassian.soomiles.com/docs/tools-reference) for the complete list.
+See upstream [Tools Reference](https://mcp-atlassian.soomiles.com/docs/tools-reference) for the full list.
+
+## Development
+
+```bash
+uv sync --frozen --all-extras --dev   # install dependencies
+pre-commit install                     # setup hooks
+pre-commit run --all-files            # lint (Ruff + mypy)
+uv run pytest -xvs                    # run tests
+```
 
 ## Security
 
 Never share API tokens. Keep `.env` files secure. See [SECURITY.md](SECURITY.md).
 
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup.
-
 ## License
 
-MIT - See [LICENSE](LICENSE). Not an official Atlassian product.
+MIT — See [LICENSE](LICENSE). Based on [sooperset/mcp-atlassian](https://github.com/sooperset/mcp-atlassian). Not an official Atlassian product.

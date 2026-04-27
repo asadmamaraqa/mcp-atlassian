@@ -269,6 +269,36 @@ class TestSearchMixin:
         assert isinstance(results, list)
         assert len(results) == 0
 
+    def test_get_recent_pages_for_edited_activity(self, search_mixin):
+        """Test recent page query construction for edited activity."""
+        expected_results = [MagicMock()]
+        search_mixin.search = MagicMock(return_value=expected_results)
+
+        results = search_mixin.get_recent_pages(
+            activity="edited",
+            limit=7,
+            spaces_filter="DEV",
+            days_back=14,
+        )
+
+        search_mixin.search.assert_called_once_with(
+            'type = page AND contributor = currentUser() AND '
+            'lastModified >= now("-14d") ORDER BY lastModified DESC',
+            limit=7,
+            spaces_filter="DEV",
+        )
+        assert results == expected_results
+
+    def test_get_recent_pages_rejects_visited_activity(self, search_mixin):
+        """Test that visited activity is explicitly rejected."""
+        with pytest.raises(ValueError, match="Recent visited pages"):
+            search_mixin.get_recent_pages(activity="visited")
+
+    def test_get_recent_pages_rejects_invalid_days_back(self, search_mixin):
+        """Test validation of days_back."""
+        with pytest.raises(ValueError, match="days_back"):
+            search_mixin.get_recent_pages(days_back=0)
+
     def test_search_user_success(self, search_mixin):
         """Test search_user with successful results."""
         # Prepare the mock response

@@ -22,6 +22,47 @@ logger = logging.getLogger("mcp-atlassian")
 class SearchMixin(ConfluenceClient):
     """Mixin for Confluence search operations."""
 
+    def get_recent_pages(
+        self,
+        activity: str = "edited",
+        limit: int = 10,
+        spaces_filter: str | None = None,
+        days_back: int | None = 30,
+    ) -> list[ConfluencePage]:
+        """Get recent pages for the current authenticated user.
+
+        Args:
+            activity: Activity type to filter by. Currently only "edited"
+                is supported via documented Confluence APIs.
+            limit: Maximum number of results to return.
+            spaces_filter: Optional comma-separated list of space keys to filter by.
+            days_back: Optional lookback window in days. Set to None to disable
+                time-window filtering.
+
+        Returns:
+            List of recent Confluence pages.
+
+        Raises:
+            ValueError: If the activity is unsupported or the lookback window
+                is invalid.
+        """
+        normalized_activity = activity.strip().lower()
+        if normalized_activity != "edited":
+            raise ValueError(
+                "Recent visited pages are not available via the supported "
+                "Confluence REST/CQL APIs. Use activity='edited'."
+            )
+
+        if days_back is not None and days_back < 1:
+            raise ValueError("days_back must be at least 1 when provided.")
+
+        clauses = ["type = page", "contributor = currentUser()"]
+        if days_back is not None:
+            clauses.append(f'lastModified >= now("-{days_back}d")')
+
+        cql = " AND ".join(clauses) + " ORDER BY lastModified DESC"
+        return self.search(cql, limit=limit, spaces_filter=spaces_filter)
+
     @handle_atlassian_api_errors("Confluence API")
     def search(
         self, cql: str, limit: int = 10, spaces_filter: str | None = None

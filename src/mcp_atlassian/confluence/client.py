@@ -12,6 +12,7 @@ from ..utils.logging import get_masked_session_headers, log_config_param, mask_s
 from ..utils.oauth import configure_oauth_session
 from ..utils.ssl import configure_ssl_verification
 from .config import ConfluenceConfig
+from .v2_adapter import ConfluenceV2Adapter
 
 # Configure logging
 logger = logging.getLogger("mcp-atlassian")
@@ -166,8 +167,14 @@ class ConfluenceClient:
             logger.debug(
                 "Testing Confluence authentication by making a simple API call..."
             )
-            # Make a simple API call to test authentication
-            spaces = self.confluence.get_all_spaces(start=0, limit=1)
+            # Use the supported v2 spaces endpoint for Cloud OAuth.
+            if self.config.auth_type == "oauth" and self.config.is_cloud:
+                spaces = ConfluenceV2Adapter(
+                    session=self.confluence._session,
+                    base_url=self.confluence.url,
+                ).list_spaces(start=0, limit=1)
+            else:
+                spaces = self.confluence.get_all_spaces(start=0, limit=1)
             if spaces is not None:
                 logger.info(
                     f"Confluence authentication successful. "

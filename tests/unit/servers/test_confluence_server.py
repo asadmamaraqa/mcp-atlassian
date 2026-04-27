@@ -41,6 +41,7 @@ def mock_confluence_fetcher():
 
     # Set up mock responses for each method
     mock_fetcher.search.return_value = [mock_page]
+    mock_fetcher.get_recent_pages.return_value = [mock_page]
     mock_fetcher.get_page_content.return_value = mock_page
     mock_fetcher.get_page_children.return_value = [mock_page]
     mock_fetcher.get_space_page_tree.return_value = {
@@ -200,6 +201,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
         get_page,
         get_page_children,
         get_page_images,
+        get_recent_pages,
         get_space_page_tree,
         search,
         search_user,
@@ -226,6 +228,7 @@ def test_confluence_mcp(mock_confluence_fetcher, mock_base_confluence_config):
     # Create and configure the sub-MCP for Confluence tools
     confluence_sub_mcp = FastMCP(name="TestConfluenceSubMCP")
     confluence_sub_mcp.add_tool(search)
+    confluence_sub_mcp.add_tool(get_recent_pages)
     confluence_sub_mcp.add_tool(get_page)
     confluence_sub_mcp.add_tool(get_page_children)
     confluence_sub_mcp.add_tool(get_space_page_tree)
@@ -269,6 +272,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
         get_page,
         get_page_children,
         get_page_images,
+        get_recent_pages,
         get_space_page_tree,
         search,
         search_user,
@@ -297,6 +301,7 @@ def no_fetcher_test_confluence_mcp(mock_base_confluence_config):
     # Create and configure the sub-MCP for Confluence tools
     confluence_sub_mcp = FastMCP(name="NoFetcherTestConfluenceSubMCP")
     confluence_sub_mcp.add_tool(search)
+    confluence_sub_mcp.add_tool(get_recent_pages)
     confluence_sub_mcp.add_tool(get_page)
     confluence_sub_mcp.add_tool(get_page_children)
     confluence_sub_mcp.add_tool(get_space_page_tree)
@@ -372,6 +377,45 @@ async def test_search(client, mock_confluence_fetcher):
     assert isinstance(result_data, list)
     assert len(result_data) > 0
     assert result_data[0]["title"] == "Test Page Mock Title"
+
+
+@pytest.mark.anyio
+async def test_get_recent_pages(client, mock_confluence_fetcher):
+    """Test the recent pages tool for current-user edits."""
+    response = await client.call_tool(
+        "confluence_get_recent_pages",
+        {"activity": "edited", "limit": 5, "days_back": 14},
+    )
+
+    mock_confluence_fetcher.get_recent_pages.assert_called_once_with(
+        activity="edited",
+        limit=5,
+        spaces_filter=None,
+        days_back=14,
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert result_data["activity"] == "edited"
+    assert result_data["count"] == 1
+    assert result_data["results"][0]["title"] == "Test Page Mock Title"
+
+
+@pytest.mark.anyio
+async def test_get_recent_pages_visited_unsupported(client, mock_confluence_fetcher):
+    """Test unsupported visited activity returns a structured error."""
+    mock_confluence_fetcher.get_recent_pages.side_effect = ValueError(
+        "Recent visited pages are not available via the supported Confluence REST/CQL APIs. Use activity='edited'."
+    )
+
+    response = await client.call_tool(
+        "confluence_get_recent_pages",
+        {"activity": "visited"},
+    )
+
+    result_data = json.loads(response.content[0].text)
+    assert "error" in result_data
+    assert result_data["activity"] == "visited"
+    assert result_data["supported_activities"] == ["edited"]
 
 
 @pytest.mark.anyio

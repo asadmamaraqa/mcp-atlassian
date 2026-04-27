@@ -1,17 +1,27 @@
 """Module for Confluence space operations."""
 
 import logging
-from typing import cast
+from typing import Any, cast
 
 import requests
 
 from .client import ConfluenceClient
+from .v2_adapter import ConfluenceV2Adapter
 
 logger = logging.getLogger("mcp-atlassian")
 
 
 class SpacesMixin(ConfluenceClient):
     """Mixin for Confluence space operations."""
+
+    @property
+    def _v2_adapter(self) -> ConfluenceV2Adapter | None:
+        """Get v2 API adapter for Cloud OAuth sessions."""
+        if self.config.auth_type == "oauth" and self.config.is_cloud:
+            return ConfluenceV2Adapter(
+                session=self.confluence._session, base_url=self.confluence.url
+            )
+        return None
 
     def get_spaces(self, start: int = 0, limit: int = 10) -> dict[str, object]:
         """
@@ -24,9 +34,13 @@ class SpacesMixin(ConfluenceClient):
         Returns:
             Dictionary containing space information with results and metadata
         """
-        spaces = self.confluence.get_all_spaces(start=start, limit=limit)
+        v2_adapter = self._v2_adapter
+        if v2_adapter:
+            spaces = v2_adapter.list_spaces(start=start, limit=limit)
+        else:
+            spaces = self.confluence.get_all_spaces(start=start, limit=limit)
         # Cast the return value to the expected type
-        return cast(dict[str, object], spaces)
+        return cast(dict[str, Any], spaces)
 
     def get_user_contributed_spaces(self, limit: int = 250) -> dict:
         """

@@ -1,6 +1,6 @@
 """Unit tests for the SpacesMixin class."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -36,6 +36,22 @@ class TestSpacesMixin:
         spaces_mixin.confluence.get_all_spaces.assert_called_once_with(
             start=10, limit=20
         )
+        assert result == MOCK_SPACES_RESPONSE
+
+    def test_get_spaces_uses_v2_adapter_for_cloud_oauth(self, spaces_mixin):
+        """Cloud OAuth should use the supported v2 spaces endpoint."""
+        mock_adapter = MagicMock()
+        mock_adapter.list_spaces.return_value = MOCK_SPACES_RESPONSE
+
+        with patch.object(
+            SpacesMixin,
+            "_v2_adapter",
+            new_callable=lambda: property(lambda _self: mock_adapter),
+        ):
+            result = spaces_mixin.get_spaces(start=5, limit=15)
+
+        mock_adapter.list_spaces.assert_called_once_with(start=5, limit=15)
+        spaces_mixin.confluence.get_all_spaces.assert_not_called()
         assert result == MOCK_SPACES_RESPONSE
 
     def test_get_user_contributed_spaces_success(self, spaces_mixin):

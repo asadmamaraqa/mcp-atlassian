@@ -2643,6 +2643,85 @@ class TestPageHierarchy:
         assert page["depth"] == 0
         assert page["position"] == 0
 
+    def test_get_space_page_tree_uses_v2_adapter_for_cloud_oauth(self, pages_mixin):
+        """Cloud OAuth should use the supported v2 pages endpoint."""
+        mock_adapter = MagicMock()
+        mock_adapter.list_space_pages.return_value = {
+            "results": [
+                {
+                    "id": "123",
+                    "title": "Root Page",
+                    "parentId": None,
+                    "position": 0,
+                }
+            ],
+            "_links": {},
+        }
+
+        with patch.object(
+            PagesMixin,
+            "_v2_adapter",
+            new_callable=lambda: property(lambda _self: mock_adapter),
+        ):
+            result = pages_mixin.get_space_page_tree("TEST")
+
+        mock_adapter.list_space_pages.assert_called_once_with(
+            space_key="TEST", cursor=None, limit=200
+        )
+        pages_mixin.confluence.get_all_pages_from_space_raw.assert_not_called()
+        assert result["pages"][0]["id"] == "123"
+        assert result["pages"][0]["parent_id"] is None
+        assert result["pages"][0]["depth"] == 0
+
+    def test_get_space_page_tree_v2_paginates_with_cursor(self, pages_mixin):
+        """The v2 page tree path should follow cursor pagination links."""
+        mock_adapter = MagicMock()
+        mock_adapter.list_space_pages.side_effect = [
+            {
+                "results": [
+                    {
+                        "id": "123",
+                        "title": "Parent Page",
+                        "parentId": None,
+                        "position": 0,
+                    }
+                ],
+                "_links": {
+                    "next": "/wiki/api/v2/spaces/42/pages?cursor=next-cursor&limit=1"
+                },
+            },
+            {
+                "results": [
+                    {
+                        "id": "456",
+                        "title": "Child Page",
+                        "parentId": "123",
+                        "position": 0,
+                    }
+                ],
+                "_links": {},
+            },
+        ]
+
+        with patch.object(
+            PagesMixin,
+            "_v2_adapter",
+            new_callable=lambda: property(lambda _self: mock_adapter),
+        ):
+            result = pages_mixin.get_space_page_tree("TEST", limit=500)
+
+        calls = mock_adapter.list_space_pages.call_args_list
+        assert calls[0].kwargs == {"space_key": "TEST", "cursor": None, "limit": 200}
+        assert calls[1].kwargs == {
+            "space_key": "TEST",
+            "cursor": "next-cursor",
+            "limit": 200,
+        }
+        child = next(page for page in result["pages"] if page["id"] == "456")
+        assert child["parent_id"] == "123"
+        assert child["depth"] == 1
+        assert result["has_more"] is False
+
     def test_get_space_page_tree_with_children(self, pages_mixin):
         """Test get_space_page_tree returns parent_id and depth correctly."""
         mock_pages = [
