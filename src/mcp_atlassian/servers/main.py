@@ -4,9 +4,9 @@ import base64
 import json
 import logging
 import os
-from http.cookies import CookieError, SimpleCookie
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from http.cookies import CookieError, SimpleCookie
 from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 
