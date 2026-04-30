@@ -356,10 +356,14 @@ class TestUserTokenMiddleware:
         assert "state" not in passed_scope  # No auth state added
 
     @pytest.mark.anyio
-    async def test_mcp_session_id_logged(
+    async def test_mcp_session_id_header_does_not_break_auth(
         self, middleware, mock_scope, mock_receive, mock_send, caplog
     ):
-        """Test that mcp-session-id header is logged for debugging."""
+        """Test that an mcp-session-id header does not break auth processing.
+
+        Note: Session IDs are now read from cookies, not from a dedicated header.
+        This test verifies the middleware still processes the request normally.
+        """
         mock_scope["headers"] = [
             (b"authorization", b"Bearer valid-token"),
             (b"mcp-session-id", b"test-session-123"),
@@ -368,7 +372,8 @@ class TestUserTokenMiddleware:
         with caplog.at_level(logging.DEBUG, logger="mcp-atlassian.server.main"):
             await middleware(mock_scope, mock_receive, mock_send)
 
-        assert "MCP-Session-ID header found: test-session-123" in caplog.text
+        # Middleware should still process the request (Bearer token is handled)
+        assert "UserTokenMiddleware: Processing POST /mcp" in caplog.text
 
     @pytest.mark.anyio
     async def test_valid_bearer_token_proceeds(
