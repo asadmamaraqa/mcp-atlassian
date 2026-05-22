@@ -27,7 +27,9 @@ def _stringify(value: Any, default: str = "Unknown") -> str:
     return str(value)
 
 
-def _append_kv(lines: list[str], label: str, value: Any, default: str = "Unknown") -> None:
+def _append_kv(
+    lines: list[str], label: str, value: Any, default: str = "Unknown"
+) -> None:
     lines.append(f"- {label}: {_stringify(value, default)}")
 
 
@@ -145,7 +147,9 @@ def register_atlassian_resources(server: FastMCP[Any]) -> None:
                 user = JiraUser.from_api_response(raw_user).to_simplified_dict()
             else:
                 account_id = jira.get_current_user_account_id()
-                user = jira.get_user_profile_by_identifier(account_id).to_simplified_dict()
+                user = jira.get_user_profile_by_identifier(
+                    account_id
+                ).to_simplified_dict()
             lines = [
                 "# Jira Account",
                 "",
@@ -326,7 +330,9 @@ def register_atlassian_resources(server: FastMCP[Any]) -> None:
         try:
             confluence = await get_confluence_fetcher(ctx)
             spaces_data = confluence.get_spaces(start=0, limit=100)
-            raw_spaces = spaces_data.get("results", []) if isinstance(spaces_data, dict) else []
+            raw_spaces = (
+                spaces_data.get("results", []) if isinstance(spaces_data, dict) else []
+            )
             spaces = raw_spaces if isinstance(raw_spaces, list) else []
         except Exception as exc:
             return "\n".join(
@@ -367,7 +373,9 @@ def register_atlassian_resources(server: FastMCP[Any]) -> None:
         confluence = await get_confluence_fetcher(ctx)
         resource_uri = f"atlassian://confluence/spaces/{_quoted_segment(space_key)}"
         spaces_data = confluence.get_spaces(start=0, limit=100)
-        raw_spaces = spaces_data.get("results", []) if isinstance(spaces_data, dict) else []
+        raw_spaces = (
+            spaces_data.get("results", []) if isinstance(spaces_data, dict) else []
+        )
         spaces = raw_spaces if isinstance(raw_spaces, list) else []
         space = next(
             (
@@ -448,11 +456,19 @@ def register_atlassian_resources(server: FastMCP[Any]) -> None:
             "## Metadata",
         ]
         _append_kv(lines, "Page ID", metadata.get("id"), page_id)
-        space = metadata.get("space") if isinstance(metadata.get("space"), dict) else None
+        space = (
+            metadata.get("space") if isinstance(metadata.get("space"), dict) else None
+        )
         _append_kv(lines, "Space", space.get("key") if space else None, "Unknown")
         _append_kv(lines, "URL", metadata.get("url"), "Unavailable")
-        version = metadata.get("version") if isinstance(metadata.get("version"), dict) else None
-        _append_kv(lines, "Version", version.get("number") if version else None, "Unknown")
+        version = (
+            metadata.get("version")
+            if isinstance(metadata.get("version"), dict)
+            else None
+        )
+        _append_kv(
+            lines, "Version", version.get("number") if version else None, "Unknown"
+        )
 
         lines.extend(["", "## Page Content", content or "_No page content available._"])
         return "\n".join(lines)

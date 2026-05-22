@@ -77,15 +77,23 @@ def test_build_frontend_resource_script_constrains_iframe_layout() -> None:
         theme="light",
     )
 
-    assert "viewport.setAttribute('content', 'width=device-width, initial-scale=1');" in script
+    assert (
+        "viewport.setAttribute('content', 'width=device-width, initial-scale=1');"
+        in script
+    )
     assert "html.style.width = '100%';" in script
     assert "document.body.style.maxWidth = '100%';" in script
     assert "root.style.maxWidth = '100%';" in script
     assert "html, body { width: 100%; max-width: 100%; overflow-x: hidden; }" in script
-    assert "#atlassian-resource-root { width: 100%; max-width: 100%; overflow-x: hidden; }" in script
+    assert (
+        "#atlassian-resource-root { width: 100%; max-width: 100%; overflow-x: hidden; }"
+        in script
+    )
     assert "summary > span { min-width: 0; }" in script
     assert ".issue-card { display: grid; gap: 4px; width: 100%;" in script
-    assert "padding: 10px 12px 10px min(calc(var(--depth) * 14px + 12px), 68px);" in script
+    assert (
+        "padding: 10px 12px 10px min(calc(var(--depth) * 14px + 12px), 68px);" in script
+    )
 
 
 def test_build_frontend_resource_script_supports_search_and_show_more() -> None:
@@ -145,7 +153,7 @@ def test_build_frontend_resource_script_preserves_open_panels() -> None:
     assert "openPanels: {}" in script
     assert "captureOpenPanels" in script
     assert "details[data-panel-id]" in script
-    assert "data-panel-id=\"${escapeHtml(panelId)}\"" in script
+    assert 'data-panel-id="${escapeHtml(panelId)}"' in script
     assert "panel.addEventListener('toggle'" in script
 
 

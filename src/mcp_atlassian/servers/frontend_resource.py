@@ -106,7 +106,9 @@ def _summarize_issue(issue: dict[str, Any], project_key: str = "") -> dict[str, 
         "key": key,
         "summary": _stringify(issue.get("summary"), "No summary"),
         "status": status,
-        "resourceUri": f"atlassian://jira/projects/{_quoted_segment(project_key)}/issues/{_quoted_segment(key)}" if project_key and key else "",
+        "resourceUri": f"atlassian://jira/projects/{_quoted_segment(project_key)}/issues/{_quoted_segment(key)}"
+        if project_key and key
+        else "",
     }
 
 
@@ -154,15 +156,15 @@ def build_frontend_payload(
             key = _stringify(project.get("key"))
             issue_items: list[dict[str, Any]] = []
             try:
-              issues_result = jira_fetcher.get_project_issues(key, limit=25)
-              issues_data = issues_result.to_simplified_dict()
-              issue_items = [
-                item
-                for item in issues_data.get("issues", [])[:25]
-                if isinstance(item, dict)
-              ]
+                issues_result = jira_fetcher.get_project_issues(key, limit=25)
+                issues_data = issues_result.to_simplified_dict()
+                issue_items = [
+                    item
+                    for item in issues_data.get("issues", [])[:25]
+                    if isinstance(item, dict)
+                ]
             except Exception:
-              issue_items = []
+                issue_items = []
 
             projects.append(
                 {
@@ -175,7 +177,9 @@ def build_frontend_payload(
                     "type": _stringify(project.get("projectTypeKey"), "Unknown"),
                     "archived": bool(project.get("archived", False)),
                     "resourceUri": f"atlassian://jira/projects/{_quoted_segment(key)}",
-                    "recentIssues": [_summarize_issue(issue, key) for issue in issue_items],
+                    "recentIssues": [
+                        _summarize_issue(issue, key) for issue in issue_items
+                    ],
                 }
             )
 
@@ -280,9 +284,7 @@ def build_frontend_payload(
         payload["confluence"] = {
             "available": True,
             "account": {
-                "name": _stringify(
-                    user.get("displayName") or user.get("username")
-                ),
+                "name": _stringify(user.get("displayName") or user.get("username")),
                 "email": _stringify(user.get("email"), "Unavailable"),
                 "site": _stringify(getattr(confluence_fetcher.config, "url", None)),
             }
@@ -463,7 +465,7 @@ def build_frontend_resource_script(payload: dict[str, Any], theme: str) -> str:
     if (!url) return '';
     try {
       const h = new URL(url).hostname;
-      if (h === 'api.atlassian.com') return url.split('/').pop() ? url.match(/atlassian\.com\/ex\/\w+\/(.+)/)?.[1] || 'Atlassian Cloud' : 'Atlassian Cloud';
+      if (h === 'api.atlassian.com') return url.split('/').pop() ? url.match(/atlassian\\.com\\/ex\\/\\w+\\/(.+)/)?.[1] || 'Atlassian Cloud' : 'Atlassian Cloud';
       return h;
     } catch { return url; }
   };
@@ -847,4 +849,6 @@ def build_frontend_resource_script(payload: dict[str, Any], theme: str) -> str:
   render();
 })();
 """.strip()
-    return template.replace("__PAYLOAD__", payload_json).replace("__THEME__", theme_json)
+    return template.replace("__PAYLOAD__", payload_json).replace(
+        "__THEME__", theme_json
+    )

@@ -121,7 +121,9 @@ def _resolve_instance_url() -> str | None:
     # When no instance URL is set but OAuth credentials are present, assume Cloud
     # mode. The user picks their Atlassian site during the OAuth consent screen and
     # the cloud_id is resolved dynamically from accessible-resources after login.
-    if os.getenv("ATLASSIAN_OAUTH_CLIENT_ID") and os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET"):
+    if os.getenv("ATLASSIAN_OAUTH_CLIENT_ID") and os.getenv(
+        "ATLASSIAN_OAUTH_CLIENT_SECRET"
+    ):
         return "https://cloud.atlassian.net"
 
     return None
@@ -331,9 +333,10 @@ class FunctionAIOAuthBridge:
 
         token_data = self._refresh_access_token(session.refresh_token)
         session.access_token = str(token_data["access_token"])
-        session.refresh_token = _coerce_optional_str(
-            token_data.get("refresh_token")
-        ) or session.refresh_token
+        session.refresh_token = (
+            _coerce_optional_str(token_data.get("refresh_token"))
+            or session.refresh_token
+        )
         session.expires_at = _extract_expiry(token_data)
         session.cloud_id = session.cloud_id or self._resolve_cloud_id(
             session.access_token
@@ -591,9 +594,7 @@ def _build_external_route_url(
     **query_params: str,
 ) -> str:
     route_path = route_path if route_path.startswith("/") else f"/{route_path}"
-    forwarded_proto = (
-        request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
-    )
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
     scheme = forwarded_proto or request.url.scheme
     host = (
         request.headers.get("x-forwarded-host")

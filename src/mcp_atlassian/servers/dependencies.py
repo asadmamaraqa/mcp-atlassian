@@ -64,7 +64,9 @@ def _apply_request_preferences(
     if not normalized_project:
         return user_config
 
-    allowed_projects = _parse_filter_values(getattr(user_config, "projects_filter", None))
+    allowed_projects = _parse_filter_values(
+        getattr(user_config, "projects_filter", None)
+    )
     if allowed_projects and normalized_project not in allowed_projects:
         logger.warning(
             "Ignoring selected Jira project '%s' because it is outside the configured project filter",

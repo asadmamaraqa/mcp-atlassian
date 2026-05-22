@@ -143,7 +143,9 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
     # When OAuth proxy is enabled, per-request tokens come from the bridge session.
     # The global config only needs to exist (auth completeness is not required).
     proxy_mode = os.getenv("ATLASSIAN_OAUTH_PROXY_ENABLE", "").lower() in (
-        "true", "1", "yes",
+        "true",
+        "1",
+        "yes",
     )
 
     if services.get("jira"):
@@ -454,7 +456,9 @@ def _resolve_frontend_app_context(request: Request) -> MainAppContext:
     # When OAuth proxy is enabled, per-request tokens come from the bridge session.
     # The global config only needs to exist (auth completeness is not required).
     proxy_mode = os.getenv("ATLASSIAN_OAUTH_PROXY_ENABLE", "").lower() in (
-        "true", "1", "yes",
+        "true",
+        "1",
+        "yes",
     )
 
     if get_available_services().get("jira"):
@@ -612,7 +616,9 @@ class UserTokenMiddleware:
             cloud_id_str = (
                 cloud_id_header.decode("latin-1") if cloud_id_header else None
             )
-            cookie_header_str = cookie_header.decode("latin-1") if cookie_header else None
+            cookie_header_str = (
+                cookie_header.decode("latin-1") if cookie_header else None
+            )
 
             # Extract additional Atlassian service headers for service availability detection
             jira_token_header = headers.get(b"x-atlassian-jira-personal-token")
@@ -680,9 +686,7 @@ class UserTokenMiddleware:
             if cookie_header_str:
                 session_id_str = self._get_mcp_session_id_from_cookie(cookie_header_str)
                 if session_id_str:
-                    logger.debug(
-                        "UserTokenMiddleware: MCP session cookie found"
-                    )
+                    logger.debug("UserTokenMiddleware: MCP session cookie found")
 
             logger.debug(
                 f"UserTokenMiddleware: Processing auth for {scope.get('path')}, "
@@ -1168,10 +1172,7 @@ async def _frontend_preferences(request: Request) -> JSONResponse:
     show_confluence_supplied = "show_confluence" in payload
     selected_project = payload.get("selected_jira_project")
 
-    if (
-        not selected_project_supplied
-        and not show_confluence_supplied
-    ):
+    if not selected_project_supplied and not show_confluence_supplied:
         return JSONResponse(
             {"error": "No frontend preferences were provided"},
             status_code=400,
@@ -1244,9 +1245,7 @@ async def _frontend_resource(request: Request) -> PlainTextResponse:
                 session.cloud_id or "missing",
             )
         else:
-            logger.info(
-                "Frontend resource falling back to unauthenticated payload"
-            )
+            logger.info("Frontend resource falling back to unauthenticated payload")
 
     theme = (request.query_params.get("theme") or "light").strip().lower()
     if theme not in {"light", "dark"}:
@@ -1257,7 +1256,9 @@ async def _frontend_resource(request: Request) -> PlainTextResponse:
     jira_fetcher = None
     confluence_fetcher = None
 
-    jira_config = getattr(app_context, "full_jira_config", None) if app_context else None
+    jira_config = (
+        getattr(app_context, "full_jira_config", None) if app_context else None
+    )
     if jira_config is not None:
         try:
             jira_fetcher = build_jira_fetcher_for_request(request, jira_config)

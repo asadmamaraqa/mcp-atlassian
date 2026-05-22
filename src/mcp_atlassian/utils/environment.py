@@ -120,15 +120,16 @@ def get_available_services(
             "- expecting user-provided tokens via headers"
         )
 
-    if not confluence_is_setup and os.getenv("ATLASSIAN_OAUTH_PROXY_ENABLE", "").lower() in (
+    if not confluence_is_setup and os.getenv(
+        "ATLASSIAN_OAUTH_PROXY_ENABLE", ""
+    ).lower() in (
         "true",
         "1",
         "yes",
     ):
         confluence_is_setup = True
         logger.info(
-            "Using Confluence via OAuth proxy "
-            "- tokens provided by FunctionAI bridge"
+            "Using Confluence via OAuth proxy - tokens provided by FunctionAI bridge"
         )
 
     if not confluence_is_setup:
@@ -176,10 +177,7 @@ def get_available_services(
         "yes",
     ):
         jira_is_setup = True
-        logger.info(
-            "Using Jira via OAuth proxy "
-            "- tokens provided by FunctionAI bridge"
-        )
+        logger.info("Using Jira via OAuth proxy - tokens provided by FunctionAI bridge")
 
     if not jira_is_setup:
         jira_token = headers.get("X-Atlassian-Jira-Personal-Token")

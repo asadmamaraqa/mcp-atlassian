@@ -282,7 +282,7 @@ class TestSearchMixin:
         )
 
         search_mixin.search.assert_called_once_with(
-            'type = page AND contributor = currentUser() AND '
+            "type = page AND contributor = currentUser() AND "
             'lastModified >= now("-14d") ORDER BY lastModified DESC',
             limit=7,
             spaces_filter="DEV",
