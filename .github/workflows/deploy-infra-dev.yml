@@ -38,6 +38,13 @@ jobs:
           [ -z "${{ vars.PLUGIN_VNET_CIDR_B }}" ] && ( echo "PLUGIN_VNET_CIDR_B var required"; exit 1; )
           [ -z "${{ vars.PLUGIN_NAME }}" ] && ( echo "PLUGIN_NAME var required"; exit 1; )
 
+          # Atlassian OAuth
+          [ -z "${{ secrets.ATLASSIAN_OAUTH_CLIENT_ID }}" ] && ( echo "ATLASSIAN_OAUTH_CLIENT_ID secret required"; exit 1; )
+          [ -z "${{ secrets.ATLASSIAN_OAUTH_CLIENT_SECRET }}" ] && ( echo "ATLASSIAN_OAUTH_CLIENT_SECRET secret required"; exit 1; )
+          [ -z "${{ vars.ATLASSIAN_OAUTH_REDIRECT_URI }}" ] && ( echo "ATLASSIAN_OAUTH_REDIRECT_URI var required"; exit 1; )
+          [ -z "${{ vars.ATLASSIAN_OAUTH_SCOPE }}" ] && ( echo "ATLASSIAN_OAUTH_SCOPE var required"; exit 1; )
+          [ -z "${{ vars.PUBLIC_BASE_URL }}" ] && ( echo "PUBLIC_BASE_URL var required"; exit 1; )
+
           exit 0
 
       - name: Checkout
@@ -113,4 +120,9 @@ jobs:
               mcpServerImagePort=${{ vars.CONTAINER_PORT }} \
               mcpImageTag="${GITHUB_SHA}" \
               acrName="${{ vars.ACR_NAME }}" \
-              acrPassword="${ACR_PASSWORD}"
+              acrPassword="${ACR_PASSWORD}" \
+              atlassianOauthClientId="${{ secrets.ATLASSIAN_OAUTH_CLIENT_ID }}" \
+              atlassianOauthClientSecret="${{ secrets.ATLASSIAN_OAUTH_CLIENT_SECRET }}" \
+              atlassianOauthRedirectUri="${{ vars.ATLASSIAN_OAUTH_REDIRECT_URI }}" \
+              atlassianOauthScope="${{ vars.ATLASSIAN_OAUTH_SCOPE }}" \
+              publicBaseUrl="${{ vars.PUBLIC_BASE_URL }}"

@@ -110,11 +110,21 @@ class OAuthSession:
 
 
 def _resolve_instance_url() -> str | None:
-    return (
+    url = (
         os.getenv("ATLASSIAN_OAUTH_INSTANCE_URL")
         or os.getenv("JIRA_URL")
         or os.getenv("CONFLUENCE_URL")
     )
+    if url:
+        return url
+
+    # When no instance URL is set but OAuth credentials are present, assume Cloud
+    # mode. The user picks their Atlassian site during the OAuth consent screen and
+    # the cloud_id is resolved dynamically from accessible-resources after login.
+    if os.getenv("ATLASSIAN_OAUTH_CLIENT_ID") and os.getenv("ATLASSIAN_OAUTH_CLIENT_SECRET"):
+        return "https://cloud.atlassian.net"
+
+    return None
 
 
 def _load_config_from_env() -> FunctionAIOAuthConfig | None:
@@ -193,6 +203,10 @@ class FunctionAIOAuthBridge:
             "Created pending Atlassian OAuth authorization for user '%s'",
             user_id or "anonymous",
         )
+        # Always derive from request so the auth URL host matches whatever host
+        # the caller (e.g., FunctionAI backend) used to reach this server.
+        # This ensures the is_same_host trust check passes without requiring
+        # the caller to allowlist external OAuth domains.
         return _build_external_route_url(request, "/api/auth/authorize", state=state)
 
     def build_authorization_url(self, request: Request, state: str) -> str:

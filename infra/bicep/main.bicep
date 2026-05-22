@@ -9,6 +9,14 @@ param acrName string
 @secure()
 param acrPassword string
 
+// Atlassian OAuth params
+param atlassianOauthClientId string
+@secure()
+param atlassianOauthClientSecret string
+param atlassianOauthRedirectUri string
+param atlassianOauthScope string
+param publicBaseUrl string
+
 module setup './modules/plugin-setup.bicep' = {
   name: '${deployment().name}-spoke'
   params: {
@@ -36,6 +44,11 @@ module exampleWorkload './modules/example-workload.bicep' = {
     workloadImagePort: mcpServerImagePort
     acrName: acrName
     acrPassword: acrPassword
+    atlassianOauthClientId: atlassianOauthClientId
+    atlassianOauthClientSecret: atlassianOauthClientSecret
+    atlassianOauthRedirectUri: atlassianOauthRedirectUri
+    atlassianOauthScope: atlassianOauthScope
+    publicBaseUrl: publicBaseUrl
   }
 }
 

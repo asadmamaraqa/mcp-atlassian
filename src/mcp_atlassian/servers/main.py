@@ -140,10 +140,16 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
     loaded_jira_config: JiraConfig | None = None
     loaded_confluence_config: ConfluenceConfig | None = None
 
+    # When OAuth proxy is enabled, per-request tokens come from the bridge session.
+    # The global config only needs to exist (auth completeness is not required).
+    proxy_mode = os.getenv("ATLASSIAN_OAUTH_PROXY_ENABLE", "").lower() in (
+        "true", "1", "yes",
+    )
+
     if services.get("jira"):
         try:
             jira_config = JiraConfig.from_env()
-            if jira_config.is_auth_configured():
+            if proxy_mode or jira_config.is_auth_configured():
                 loaded_jira_config = jira_config
                 logger.info(
                     "Jira configuration loaded and authentication is configured."
@@ -158,7 +164,7 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
     if services.get("confluence"):
         try:
             confluence_config = ConfluenceConfig.from_env()
-            if confluence_config.is_auth_configured():
+            if proxy_mode or confluence_config.is_auth_configured():
                 loaded_confluence_config = confluence_config
                 logger.info(
                     "Confluence configuration loaded and authentication is configured."
@@ -445,10 +451,16 @@ def _resolve_frontend_app_context(request: Request) -> MainAppContext:
     loaded_jira_config = None
     loaded_confluence_config = None
 
+    # When OAuth proxy is enabled, per-request tokens come from the bridge session.
+    # The global config only needs to exist (auth completeness is not required).
+    proxy_mode = os.getenv("ATLASSIAN_OAUTH_PROXY_ENABLE", "").lower() in (
+        "true", "1", "yes",
+    )
+
     if get_available_services().get("jira"):
         try:
             candidate = JiraConfig.from_env()
-            if candidate.is_auth_configured():
+            if proxy_mode or candidate.is_auth_configured():
                 loaded_jira_config = candidate
         except Exception:
             loaded_jira_config = None
@@ -456,7 +468,7 @@ def _resolve_frontend_app_context(request: Request) -> MainAppContext:
     if get_available_services().get("confluence"):
         try:
             candidate = ConfluenceConfig.from_env()
-            if candidate.is_auth_configured():
+            if proxy_mode or candidate.is_auth_configured():
                 loaded_confluence_config = candidate
         except Exception:
             loaded_confluence_config = None

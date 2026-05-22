@@ -459,6 +459,15 @@ def build_frontend_resource_script(payload: dict[str, Any], theme: str) -> str:
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
+  const formatSite = (url) => {
+    if (!url) return '';
+    try {
+      const h = new URL(url).hostname;
+      if (h === 'api.atlassian.com') return url.split('/').pop() ? url.match(/atlassian\.com\/ex\/\w+\/(.+)/)?.[1] || 'Atlassian Cloud' : 'Atlassian Cloud';
+      return h;
+    } catch { return url; }
+  };
+
   const normalizeSearch = (value) => String(value || '').trim().toLowerCase();
 
   const matchesSearch = (values, query) => {
@@ -722,39 +731,24 @@ def build_frontend_resource_script(payload: dict[str, Any], theme: str) -> str:
           <div class="account">
             <div><strong>${escapeHtml(payload.jira.account.name)}</strong></div>
             <div class="muted">${escapeHtml(payload.jira.account.email)}</div>
-            <div class="muted">${escapeHtml(payload.jira.account.site)}</div>
+            ${payload.jira.account.site && payload.jira.account.site !== 'Unknown' ? `<div class="muted">${escapeHtml(formatSite(payload.jira.account.site))}</div>` : ''}
           </div>
-        ` : ''}
-        <details class="tips-banner" id="tips-panel" ${isPanelOpen('tips-panel') ? 'open' : ''}>
-          <summary>💡 Tips for using Atlassian with AI<span class="collapse-arrow ${isPanelOpen('tips-panel') ? '' : 'closed'}"></span></summary>
-          <div class="tips-body">
-            <div class="tip-item"><span class="tip-bullet">→</span><span>Mention <strong>"in Jira"</strong>, <strong>"in Confluence"</strong>, or <strong>"in Atlassian"</strong> in your prompt so the AI knows which tool to use.<br><span class="tip-example">e.g. "Find my open bugs in Jira" or "Search for onboarding docs in Confluence"</span></span></div>
-            <div class="tip-item"><span class="tip-bullet">→</span><span>Use <strong>project keys</strong> or <strong>issue keys</strong> when referring to specific items.<br><span class="tip-example">e.g. "Update PROJ-123 status to Done" or "Show issues in DEV project"</span></span></div>
-            <div class="tip-item"><span class="tip-bullet">→</span><span>Be specific about what you want — <strong>search, create, update,</strong> or <strong>read</strong>.<br><span class="tip-example">e.g. "Create a bug ticket in PROJ for the login error" or "Add a comment to PROJ-456"</span></span></div>
-            <div class="tip-item"><span class="tip-bullet">→</span><span>You can ask about <strong>sprints, boards, and agile workflows</strong> too.<br><span class="tip-example">e.g. "Get all sprints for the DEV board" or "Move PROJ-789 to the current sprint"</span></span></div>
-            <div class="tip-item"><span class="tip-bullet">→</span><span>You can <strong>search Confluence pages</strong> by topic or keyword.<br><span class="tip-example">e.g. "Search for a page that has espoo in Confluence"</span></span></div>
+        ` : (payload.confluence.available && payload.confluence.account ? `
+          <div class="account">
+            <div><strong>${escapeHtml(payload.confluence.account.name)}</strong></div>
+            <div class="muted">${escapeHtml(payload.confluence.account.email)}</div>
+            ${payload.confluence.account.site && payload.confluence.account.site !== 'Unknown' ? `<div class="muted">${escapeHtml(formatSite(payload.confluence.account.site))}</div>` : ''}
           </div>
-        </details>
-        <details class="section-collapse" id="jira-panel" ${isPanelOpen('jira-panel') ? 'open' : ''}>
-          <summary><h2>Jira</h2><span class="collapse-arrow ${isPanelOpen('jira-panel') ? '' : 'closed'}" id="jira-arrow"></span></summary>
-          <div class="section-body">
-          ${payload.jira.available && payload.jira.account ? `
-            ${payload.jira.projects.map(renderProject).join('') || '<div class="muted">No visible projects.</div>'}
-          ` : '<div class="muted">Jira is unavailable for this session.</div>'}
-          </div>
-        </details>
-        ${state.showConfluence ? `
-          <details class="section-collapse" id="confluence-panel" ${isPanelOpen('confluence-panel') ? 'open' : ''}>
-            <summary><h2>Confluence</h2><span class="collapse-arrow ${isPanelOpen('confluence-panel') ? '' : 'closed'}" id="confluence-arrow"></span></summary>
-            <div class="section-body">
-            ${payload.confluence.available && payload.confluence.account ? `
-              ${payload.confluence.spacesSource === 'contributed' ? '<div class="muted">Showing spaces inferred from your recent Confluence contributions because direct space listing returned none.</div>' : ''}
-              ${payload.confluence.spaces.map(renderSpace).join('') || `<div class="muted">${escapeHtml(payload.confluence.emptyMessage || 'No visible spaces.')}</div>`}
-            ` : '<div class="muted">Confluence is unavailable for this session.</div>'}
+        ` : '')}
+        ${(() => { const nonPersonal = (payload.confluence.spaces || []).filter(s => !s.key.startsWith('~')); return payload.confluence.available && nonPersonal.length ? `
+          <div class="section-collapse" style="padding:10px 12px; border:1px solid var(--border); border-radius:12px;">
+            <h2 style="margin:0 0 8px; font-size:13px;">Connected Spaces</h2>
+            <div style="display:grid; gap:4px;">
+              ${nonPersonal.map((space) => `<div class="muted" style="font-size:12px;">• ${escapeHtml(space.name)}${space.key ? ' (' + escapeHtml(space.key) + ')' : ''}</div>`).join('')}
             </div>
-          </details>
-        ` : ''}
-        <div class="footer">Copying a URI gives you the canonical MCP resource to use in the resource browser or chat workflow.</div>
+          </div>
+        ` : ''; })()}
+        <div class="footer">Connected to Atlassian. Use Jira and Confluence tools via chat.</div>
       </div>`;
 
     root.querySelectorAll('[data-copy]').forEach((button) => {

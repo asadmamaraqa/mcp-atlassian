@@ -16,6 +16,14 @@ param acrName string
 param acrPassword string
 param routeTableId string
 
+// Atlassian OAuth params
+param atlassianOauthClientId string
+@secure()
+param atlassianOauthClientSecret string
+param atlassianOauthRedirectUri string
+param atlassianOauthScope string
+param publicBaseUrl string
+
 var nameSuffix = 'mcp-${pluginName}-${env}'
 
 resource ourVNet 'Microsoft.Network/virtualNetworks@2021-05-01' existing = {
@@ -88,6 +96,10 @@ module ca 'br/public:avm/res/app/container-app:0.18.1' = {
         name: 'acr-password'
         value: acrPassword
       }
+      {
+        name: 'atlassian-oauth-client-secret'
+        value: atlassianOauthClientSecret
+      }
     ]
     registries: [
       {
@@ -108,6 +120,38 @@ module ca 'br/public:avm/res/app/container-app:0.18.1' = {
           {
             name: 'NAME'
             value: pluginName
+          }
+          {
+            name: 'ATLASSIAN_OAUTH_CLIENT_ID'
+            value: atlassianOauthClientId
+          }
+          {
+            name: 'ATLASSIAN_OAUTH_CLIENT_SECRET'
+            secretRef: 'atlassian-oauth-client-secret'
+          }
+          {
+            name: 'ATLASSIAN_OAUTH_REDIRECT_URI'
+            value: atlassianOauthRedirectUri
+          }
+          {
+            name: 'ATLASSIAN_OAUTH_SCOPE'
+            value: atlassianOauthScope
+          }
+          {
+            name: 'ATLASSIAN_OAUTH_PROXY_ENABLE'
+            value: 'true'
+          }
+          {
+            name: 'ATLASSIAN_OAUTH_REQUIRE_CONSENT'
+            value: 'true'
+          }
+          {
+            name: 'ATLASSIAN_OAUTH_ALLOWED_GRANT_TYPES'
+            value: 'authorization_code,refresh_token'
+          }
+          {
+            name: 'PUBLIC_BASE_URL'
+            value: publicBaseUrl
           }
         ]
       }
