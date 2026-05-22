@@ -43,7 +43,6 @@ jobs:
           [ -z "${{ secrets.ATLASSIAN_OAUTH_CLIENT_SECRET }}" ] && ( echo "ATLASSIAN_OAUTH_CLIENT_SECRET secret required"; exit 1; )
           [ -z "${{ vars.ATLASSIAN_OAUTH_REDIRECT_URI }}" ] && ( echo "ATLASSIAN_OAUTH_REDIRECT_URI var required"; exit 1; )
           [ -z "${{ vars.ATLASSIAN_OAUTH_SCOPE }}" ] && ( echo "ATLASSIAN_OAUTH_SCOPE var required"; exit 1; )
-          [ -z "${{ vars.PUBLIC_BASE_URL }}" ] && ( echo "PUBLIC_BASE_URL var required"; exit 1; )
 
           exit 0
 
@@ -124,5 +123,4 @@ jobs:
               atlassianOauthClientId="${{ secrets.ATLASSIAN_OAUTH_CLIENT_ID }}" \
               atlassianOauthClientSecret="${{ secrets.ATLASSIAN_OAUTH_CLIENT_SECRET }}" \
               atlassianOauthRedirectUri="${{ vars.ATLASSIAN_OAUTH_REDIRECT_URI }}" \
-              atlassianOauthScope="${{ vars.ATLASSIAN_OAUTH_SCOPE }}" \
-              publicBaseUrl="${{ vars.PUBLIC_BASE_URL }}"
+              atlassianOauthScope="${{ vars.ATLASSIAN_OAUTH_SCOPE }}"

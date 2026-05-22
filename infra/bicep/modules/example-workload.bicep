@@ -22,7 +22,6 @@ param atlassianOauthClientId string
 param atlassianOauthClientSecret string
 param atlassianOauthRedirectUri string
 param atlassianOauthScope string
-param publicBaseUrl string
 
 var nameSuffix = 'mcp-${pluginName}-${env}'
 
@@ -149,10 +148,7 @@ module ca 'br/public:avm/res/app/container-app:0.18.1' = {
             name: 'ATLASSIAN_OAUTH_ALLOWED_GRANT_TYPES'
             value: 'authorization_code,refresh_token'
           }
-          {
-            name: 'PUBLIC_BASE_URL'
-            value: publicBaseUrl
-          }
+
         ]
       }
     ]

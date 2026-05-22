@@ -15,7 +15,6 @@ param atlassianOauthClientId string
 param atlassianOauthClientSecret string
 param atlassianOauthRedirectUri string
 param atlassianOauthScope string
-param publicBaseUrl string
 
 module setup './modules/plugin-setup.bicep' = {
   name: '${deployment().name}-spoke'
@@ -48,7 +47,6 @@ module exampleWorkload './modules/example-workload.bicep' = {
     atlassianOauthClientSecret: atlassianOauthClientSecret
     atlassianOauthRedirectUri: atlassianOauthRedirectUri
     atlassianOauthScope: atlassianOauthScope
-    publicBaseUrl: publicBaseUrl
   }
 }
 
