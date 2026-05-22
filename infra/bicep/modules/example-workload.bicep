@@ -148,7 +148,22 @@ module ca 'br/public:avm/res/app/container-app:0.18.1' = {
             name: 'ATLASSIAN_OAUTH_ALLOWED_GRANT_TYPES'
             value: 'authorization_code,refresh_token'
           }
-
+          {
+            name: 'ATLASSIAN_OAUTH_ENABLE'
+            value: 'true'
+          }
+          {
+            name: 'ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS'
+            value: 'http://localhost:*,http://127.0.0.1:*'
+          }
+          {
+            name: 'TRANSPORT'
+            value: 'streamable-http'
+          }
+          {
+            name: 'MCP_VERY_VERBOSE'
+            value: 'true'
+          }
         ]
       }
     ]
