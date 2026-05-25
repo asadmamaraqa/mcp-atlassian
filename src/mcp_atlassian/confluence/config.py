@@ -90,7 +90,12 @@ class ConfluenceConfig:
             ValueError: If any required environment variable is missing
         """
         url = os.getenv("CONFLUENCE_URL")
-        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+        proxy_mode = os.getenv("ATLASSIAN_OAUTH_PROXY_ENABLE", "").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE") and not proxy_mode:
             error_msg = (
                 "Missing required CONFLUENCE_URL environment variable. "
                 "Set CONFLUENCE_URL to your Confluence base URL, for example "

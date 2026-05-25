@@ -166,7 +166,12 @@ class JiraConfig:
             ValueError: If required environment variables are missing or invalid
         """
         url = os.getenv("JIRA_URL")
-        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
+        proxy_mode = os.getenv("ATLASSIAN_OAUTH_PROXY_ENABLE", "").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+        if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE") and not proxy_mode:
             error_msg = (
                 "Missing required JIRA_URL environment variable. "
                 "Set JIRA_URL to your Jira base URL, for example "
