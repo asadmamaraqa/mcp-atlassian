@@ -205,11 +205,14 @@ class FunctionAIOAuthBridge:
             "Created pending Atlassian OAuth authorization for user '%s'",
             user_id or "anonymous",
         )
-        # Always derive from request so the auth URL host matches whatever host
-        # the caller (e.g., FunctionAI backend) used to reach this server.
-        # This ensures the is_same_host trust check passes without requiring
-        # the caller to allowlist external OAuth domains.
-        return _build_external_route_url(request, "/api/auth/authorize", state=state)
+        # Return the Atlassian authorization URL directly so the browser never
+        # needs to contact this (internal-only) server.  The redirect_uri is
+        # config.redirect_uri which points back to FunctionAI's public callback.
+        oauth_config = self.config.build_oauth_config(
+            redirect_uri=self.config.redirect_uri,
+            cloud_id=self.config.cloud_id,
+        )
+        return oauth_config.get_authorization_url(state)
 
     def build_authorization_url(self, request: Request, state: str) -> str:
         pending = self.pending_authorizations.get(state)
@@ -253,7 +256,7 @@ class FunctionAIOAuthBridge:
 
         token_data = self._exchange_code_for_tokens(
             code,
-            redirect_uri=self.build_browser_callback_url(request),
+            redirect_uri=self.config.redirect_uri,
         )
         access_token = str(token_data["access_token"])
         refresh_token = _coerce_optional_str(token_data.get("refresh_token"))
