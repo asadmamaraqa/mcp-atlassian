@@ -154,7 +154,7 @@ module ca 'br/public:avm/res/app/container-app:0.18.1' = {
           }
           {
             name: 'ATLASSIAN_OAUTH_ALLOWED_CLIENT_REDIRECT_URIS'
-            value: 'http://localhost:*,http://127.0.0.1:*'
+            value: 'http://localhost:*,http://127.0.0.1:*,https://solitaire-dev.solitaservices.com/*'
           }
           {
             name: 'TRANSPORT'
