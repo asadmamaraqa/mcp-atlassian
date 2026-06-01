@@ -115,6 +115,27 @@ module ca 'br/public:avm/res/app/container-app:0.18.1' = {
           cpu: '0.5'
           memory: '1Gi'
         }
+        probes: [
+          {
+            type: 'Startup'
+            tcpSocket: {
+              port: workloadImagePort
+            }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 10
+            timeoutSeconds: 10
+          }
+          {
+            type: 'Readiness'
+            tcpSocket: {
+              port: workloadImagePort
+            }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 10
+          }
+        ]
         env: [
           {
             name: 'NAME'
